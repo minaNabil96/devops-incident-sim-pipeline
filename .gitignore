@@ -1,0 +1,34 @@
+# Environment variables (NEVER commit this)
+.env
+.env.local
+.env.production
+
+# Google Colab secrets cache
+.colab/
+
+# Output files (generated during runtime)
+*_output.txt
+incident_simulation_report*.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models (if you ever add local models back)
+models/
+*.gguf
