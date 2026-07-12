@@ -186,7 +186,7 @@ output = re.sub(r'<think>.*?</think>', '', output, flags=re.DOTALL).strip()
 
 ### Option 1: Google Colab
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yourusername/devops-incident-sim-pipeline/blob/main/devops_dahl.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1pSBHRap2f8zNlIM4K7qGT1970PjTfd-Y)
 
 1. Open the notebook in Colab
 2. Add `DAHL_TOKEN` to **Secrets** (🔑 icon)
@@ -413,7 +413,7 @@ graph TD
 
 ### Google Colab
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yourusername/devops-incident-sim-pipeline/blob/main/devops_dahl.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1pSBHRap2f8zNlIM4K7qGT1970PjTfd-Y)
 
 ### Локальная разработка
 
