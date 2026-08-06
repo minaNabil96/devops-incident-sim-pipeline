@@ -1,5 +1,5 @@
 """
-LLM Client for the Dahl Global API (Kimi-K2.6).
+LLM Client for the NVIDIA build.nvidia.com API (mistralai/mistral-medium-3.5-128b).
 
 Handles SSE streaming, retry logic, and post-processing sanitization
 (removal of <think> reasoning tags).
@@ -30,7 +30,7 @@ class LLMResponse:
 
 class LLMClient:
     """
-    HTTP client for the Dahl Global API using SSE streaming.
+    HTTP client for the NVIDIA build.nvidia.com API using SSE streaming.
 
     Implements a three-tier resilience chain:
     1. Primary request with configurable timeout
@@ -44,7 +44,7 @@ class LLMClient:
         api_key = _resolve_api_key()
         if not api_key:
             raise ValueError(
-                "DAHL_TOKEN not found. Set via:\n"
+                "NVIDIA_API_KEY not found. Set via:\n"
                 "  Colab Secrets | .env file | Environment variable"
             )
 
@@ -60,10 +60,10 @@ class LLMClient:
         max_retries: Optional[int] = None,
     ) -> LLMResponse:
         """
-        Generate a completion via the Dahl API with SSE streaming.
+        Generate a completion via the NVIDIA build API with SSE streaming.
 
         Collects incremental token deltas over Server-Sent Events,
-        bypassing Cloudflare 524 timeouts on long generation sequences.
+        bypassing long-generation timeouts.
 
         Post-processes reasoning model leakage (<think>...</think> tags)
         via regex sanitization.
@@ -82,12 +82,15 @@ class LLMClient:
 
         for attempt in range(1, max_retries + 1):
             try:
+                # Timeout as (connect, read) tuple: generous read timeout keeps
+                # the connection alive across slow token streams / long
+                # reasoning phases before the first SSE chunk arrives.
                 response = requests.post(
                     url,
                     headers=self.headers,
                     json=payload,
                     stream=True,
-                    timeout=self.config.timeout_s,
+                    timeout=(30, self.config.timeout_s),
                 )
 
                 if response.status_code != 200:
@@ -159,4 +162,4 @@ class LLMClient:
 
     def _log_status(self, attempt: int, status: str | int, empty: bool = False) -> None:
         suffix = " (empty response)" if empty else ""
-        print(f"  ⚠ Attempt {attempt}: API {status}{suffix} — retrying...")
+        print(f"  [retry] Attempt {attempt}: API {status}{suffix} - retrying...")

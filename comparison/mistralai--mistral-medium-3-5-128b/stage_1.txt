@@ -1,0 +1,58 @@
+```json
+{
+  "receiver": "SecureBank-Pro-PagerDuty",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighPaymentGatewayErrorRate",
+        "severity": "critical",
+        "namespace": "production",
+        "service": "payment-gateway-service",
+        "pod": "payment-gateway-service-7c8d9f4b5-abcde",
+        "job": "payment-gateway-service",
+        "instance": "10.0.1.123:8080",
+        "cluster": "securebank-prod-eks",
+        "region": "us-east-1",
+        "environment": "production",
+        "team": "payments"
+      },
+      "annotations": {
+        "summary": "High error rate in payment-gateway-service (42% failures, P99 latency 8.2s)",
+        "description": "The payment-gateway-service is experiencing a critical degradation with 42% error rate (baseline: 0.1%) and P99 latency of 8.2s (baseline: 200ms). Current TPS: 12,500 (↑56% from baseline). Redis memory usage is at 15.2GB (↑ from 6GB), causing high eviction rates (5,000 keys/sec). Pod restarts detected (12 in last 30 min).",
+        "dashboard": "https://grafana.securebank.pro/d/securebank-payments?orgId=1&from=now-1h&to=now&var-service=payment-gateway-service",
+        "runbook": "https://wiki.securebank.pro/runbooks/payment-gateway-degradation",
+        "impact": "50% of payment requests failing with 503/429 errors. Corporate batch payments and mobile app transactions are affected globally.",
+        "severity": "critical",
+        "timestamp": "2023-11-15T09:15:00Z",
+        "generatorURL": "http://prometheus.securebank.pro:9090/graph?g0.range_input=1h&g0.expr=rate(payment_gateway_http_requests_total%7Bstatus%3D~%225..%22%7D%5B5m%5D)%20%2F%20rate(payment_gateway_http_requests_total%5B5m%5D)&g0.tab=0"
+      },
+      "startsAt": "2023-11-15T09:12:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus.securebank.pro:9090/graph?g0.range_input=1h&g0.expr=rate(payment_gateway_http_requests_total%7Bstatus%3D~%225..%22%7D%5B5m%5D)%20%2F%20rate(payment_gateway_http_requests_total%5B5m%5D)&g0.tab=0"
+    }
+  ],
+  "groupLabels": {
+    "alertname": "HighPaymentGatewayErrorRate",
+    "namespace": "production",
+    "severity": "critical"
+  },
+  "commonLabels": {
+    "alertname": "HighPaymentGatewayErrorRate",
+    "namespace": "production",
+    "severity": "critical",
+    "service": "payment-gateway-service",
+    "team": "payments"
+  },
+  "commonAnnotations": {
+    "summary": "High error rate in payment-gateway-service (42% failures, P99 latency 8.2s)",
+    "description": "Critical degradation in payment-gateway-service with high error rates and latency. Redis memory pressure and pod restarts observed.",
+    "dashboard": "https://grafana.securebank.pro/d/securebank-payments?orgId=1&from=now-1h&to=now&var-service=payment-gateway-service",
+    "runbook": "https://wiki.securebank.pro/runbooks/payment-gateway-degradation"
+  },
+  "externalUrl": "https://pagerduty.securebank.pro/incidents/INC-2023-1115-001",
+  "version": "4",
+  "groupKey": "{}:{alertname=\"HighPaymentGatewayErrorRate\", namespace=\"production\", severity=\"critical\"}"
+}
+```

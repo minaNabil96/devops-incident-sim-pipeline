@@ -1,0 +1,8 @@
+**Message for Slack #incidents (Technical Audience):**
+
+```markdown
+**Status:** Investigating
+**Impact:** 28m
+**Action:** Verifying rate-limiting bypass via ingress logs/metrics. Temporarily blocking top offending IPs (`10.0.0.1-5`) at ingress level. Backup of whitelist taken. Rollback ready if needed.
+**Next:** Scaling Redis/PostgreSQL if surge persists.
+```

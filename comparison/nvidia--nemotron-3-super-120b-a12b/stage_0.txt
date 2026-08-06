@@ -1,0 +1,53 @@
+**SecureBank Pro – Incident Scenario**  
+*Affected Service: `payment-gateway-service`*  
+
+---  
+
+### 1. System Overview  
+SecureBank Pro is a cloud‑native digital banking platform that enables retail and corporate customers to perform real‑time payments, fund transfers, and bill‑pay services via web, mobile, and API channels. The platform serves **≈2.3 million active users** and processes an average of **≈12 million payment transactions per day** with a target SLA of **≤200 ms latency** for 99.9 % of requests.  
+
+### 2. Architecture Summary  
+| Layer | Component | Technology |
+|-------|-----------|------------|
+| **API Edge** | API Gateway (AWS ALB) + AuthN/Z service | Envoy, OIDC |
+| **Core Services** | `payment-gateway-service` (receives & validates payment requests) | Python 3.11, FastAPI |
+| | `account‑service` (customer & account data) | Python/FastAPI |
+| | `fraud‑detection-service` (real‑time risk scoring) | Python/FastAPI, ML model server |
+| | `notification‑service` (SMS/email/push) | Python/FastAPI |
+| **Data Stores** | Primary transaction store | PostgreSQL 14 (primary‑replica, 3‑node) |
+| | Session & rate‑limit cache | Redis 7 (cluster mode, 3 shards) |
+| | Event streaming | Apache Kafka (managed MSK) |
+| **Observability** | Metrics collection & alerting | Prometheus + Grafana |
+| | Log aggregation | Elasticsearch + Kibana |
+| | Incident routing | PagerDuty |
+| **Orchestration** | Container platform | Amazon EKS (Kubernetes 1.27) |
+| | Service mesh (optional) | Istio (sidecar injection) |
+| | CI/CD | GitHub Actions → Argo CD (GitOps) |
+
+### 3. Current Conditions  
+- **Traffic Load:** Over the past 30 minutes, inbound request rate to `payment-gateway-service` has risen from the baseline **≈4 k req/s** to **≈9 k req/s**, a ~125 % increase.  
+- **Recent Deployments:**  
+  - **v2.4.1** of `payment-gateway-service` was rolled out 2 hours ago (feature flag for a new “instant‑settlement” endpoint).  
+  - No changes to Redis configuration or PostgreSQL schema in the last 24 h.  
+- **Observed Anomalies:**  
+  - **Prometheus alerts:** `redis_memory_used_bytes` > 85 % of cluster capacity, triggering a **Critical** alert.  
+  - **Grafana dashboards:** Payment success rate dropped from **99.8 %** to **92.5 %**; average latency spiked from **120 ms** to **≈620 ms** for the affected endpoint.  
+  - **PagerDuty:** Incident opened for `payment-gateway-service` latency and error‑rate thresholds.  
+  - **Application logs:** Increased frequency of `429 Too Many Requests` responses from the rate‑limiting middleware, followed by `500 Internal Server Error` when downstream Redis calls fail with `OOM command not allowed when used memory > 'maxmemory'`.  
+
+### 4. Service Dependencies (payment‑gateway‑service)  
+| Direction | Service / Component | Purpose | Communication Protocol |
+|-----------|---------------------|---------|------------------------|
+| **Upstream** | API Gateway (ALB) | Terminates TLS, performs basic auth, forwards requests | HTTP/1.1 + HTTP/2 |
+| | AuthN/Z service | Validates JWT/OAuth2 tokens, extracts user‑ID & roles | gRPC (internal) |
+| | Fraud‑detection-service | Calls risk‑scoring model before accepting payment | gRPC |
+| | Account‑service | Retrieves account balances, verifies destination account | REST/JSON over HTTP |
+| **Downstream** | PostgreSQL (primary) | Persists payment transaction records, updates balances | libpq (asyncpg) |
+| | Redis (cluster) | Stores short‑lived rate‑limit counters, idempotency keys, session tokens | redis‑py (async) |
+| | Kafka (MSK) | Publishes `payment.created` events for downstream settlement & reporting | Protobuf over TCP |
+| | Notification‑service | Sends payment confirmation via SMS/email/push (async) | HTTP webhook (via Kafka consumer) |
+| | Monitoring Sidecar (Prometheus exporter) | Exposes `process_*`, `http_request_*`, `redis_*` metrics | HTTP scrape |
+
+---  
+
+*This scenario captures the observable symptoms, recent changes, and inter‑service relationships without revealing the underlying root cause.*

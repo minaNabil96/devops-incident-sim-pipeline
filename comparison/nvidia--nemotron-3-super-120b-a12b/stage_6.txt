@@ -1,0 +1,87 @@
+# Post‑mortem: Payment‑Gateway Service Incident  
+**Date:** 2025‑09‑24  
+**Duration:** 28 minutes (exact)  
+
+---
+
+## 1. Metadata  
+
+| Field | Value |
+|-------|-------|
+| **Service** | `payment-gateway-service` |
+| **Date** | 2025‑09‑24 |
+| **Severity** | Critical |
+| **Duration** | 28 minutes |
+| **Status** | Resolved |
+| **On‑call Team** | Platform Reliability Team (SRE) |
+
+---
+
+## 2. Executive Summary  
+
+At 14:35 UTC a Prometheus alert fired for a critical error rate (>5 %) and elevated latency on the `payment-gateway-service`. Investigation revealed a sudden traffic surge (≈9 k req/s, up from 4 k req/s) caused by the rollout of feature flag **v2.4.1 – instant‑settlement endpoint**. The surge exhausted the Redis cache layer, triggering OOM conditions, connection refusals, and cache‑lookup failures. This caused HTTP 5xx responses, raising the error rate to 7.8% and latency to ~620 ms. The incident was mitigated by scaling Redis, adjusting memory limits, and restarting affected payment‑gateway pods. Service returned to SLA (<200 ms latency, >99.8 % success) by 15:03 UTC, and the alert auto‑resolved.  
+
+---
+
+## 3. Impact  
+
+| Dimension | Detail |
+|-----------|--------|
+| **User‑facing** | Payment requests experienced latency spikes (120 ms → 620 ms) and a failure rate of ~7.8 %; users saw timeouts or error messages when attempting payments. |
+| **Business** | Approx. 0.85 M payment requests failed during the 28‑minute window (≈7.8 % of ~10.9 M requests processed). Potential revenue impact and erosion of customer trust, though no financial data was lost. |
+| **Duration** | 28 minutes (14:35 – 15:03 UTC). |
+| **Services Affected** | `payment-gateway-service` (primary); downstream effects on `notification-service` (delayed confirmations) and `fraud‑detection-service` (reduced input volume). |
+
+---
+
+## 4. Timeline  
+
+| Time (UTC) | Event | Detected By |
+|------------|-------|--------------|
+| 14:35:00 | Prometheus alert **HighErrorRate** fires (error > 5 %, latency ≈ 620 ms) | Prometheus → PagerDuty |
+| 14:36:00 | On‑call engineer acknowledges incident in PagerDuty | SRE (Platform Reliability Team) |
+| 14:38:00 | SRE observes rising latency & error rate on Grafana dashboard | SRE |
+| 14:42:00 | Application logs show `Redis connection refused` and cache‑lookup failures | SRE (log analysis) |
+| 14:45:00 | `redis-cli INFO` reveals used memory ≈ 85 % of cluster, eviction rate rising | SRE (Redis diagnostics) |
+| 14:50:00 | Immediate remediation: scale Redis cluster (add shard), raise `maxmemory`, restart impacted payment‑gateway pods | Platform Engineering Team |
+| 14:55:00 | Error rate begins to decline; latency trending downward | SRE |
+| 15:00:00 | Success rate restored to >99.8 %; average latency <200 ms (SLA met) | SRE |
+| 15:03:00 | Alert auto‑resolved; incident declared closed | PagerDuty (auto‑resolve) |
+
+*The interval between the first and last timestamps is exactly 28 minutes.*
+
+---
+
+## 5. Root Cause Analysis  
+
+The primary cause was **resource exhaustion of the Redis cache layer** triggered by an unanticipated traffic surge:
+
+1. **Traffic surge** – The rollout of v2.4.1 introduced the *instant‑settlement* feature flag, which doubled the request rate for the payment‑gateway endpoint (from ~4 k to ~9 k req/s) within 30 minutes.  
+2. **Insufficient Redis capacity** – The Redis cluster was provisioned for baseline load; its `maxmemory` limit was reached (~5.12 GB used, 85 % of total) as the surge filled the cache with rate‑limit counters and idempotency keys.  
+3. **Aggressive eviction policy** – The instance used the default `volatile-lru` policy, which only evicts keys with an expiry set. Many rate‑limit keys lacked expiry, causing memory to fill until the OOM condition (`OOM command not allowed when used memory > 'maxmemory'`).  
+4. **Cache miss → downstream failures** – When Redis refused new connections, the payment‑gateway service fell back to a cache‑miss path, leading to failed payment processing, HTTP 5xx responses, and the observed error‑rate spike.  
+
+Thus, the incident stemmed from a combination of **unvalidated feature‑flag traffic** and **inadequate cache capacity planning**.
+
+---
+
+## 6. Contributing Factors  
+
+| Factor | Explanation |
+|--------|-------------|
+| **Feature‑flag rollout without load testing** | The instant‑settlement flag was enabled globally without a staged canary or performance test at 2× peak load. |
+| **Static Redis memory allocation** | No vertical/horizontal autoscaling policy for Redis; memory limits were set based on historical averages. |
+| **Missing Redis memory‑fragmentation alert** | No alert on `mem_fragmentation_ratio`; rising fragmentation contributed to effective memory pressure. |
+| **Rate‑limiting fallback logic** | Upon receiving `429 Too Many Requests`, the service attempted to write a new rate‑limit key to Redis; when Redis was unavailable, the request proceeded without rate‑limit protection, exacerbating load. |
+| **Insufficient circuit breaker** | Calls to Redis lacked a circuit‑breaker pattern, causing repeated connection attempts that worsened Redis load and delayed failure detection. |
+| **Observability gap** | While Redis used memory was monitored, the eviction rate and fragmentation ratio were not surfaced in dashboards, delaying early detection. |
+
+---
+
+## 7. Action Items  
+
+Exactly **4** SMART items (Specific, Measurable, Achievable, Relevant, Time‑bound).
+
+| ID | Description | Owner | Priority | Due Date |
+|----|-------------|-------|----------|----------|
+| **AI-001** | Implement **

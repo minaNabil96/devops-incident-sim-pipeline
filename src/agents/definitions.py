@@ -7,9 +7,7 @@ a specific role, goal, backstory, and toolset.
 
 from __future__ import annotations
 
-from typing import Callable
-
-from crewai import Agent
+from typing import Callable, Optional
 
 from src.tools.template_tools import (
     load_prior_stage_output,
@@ -17,10 +15,28 @@ from src.tools.template_tools import (
     save_stage_output,
 )
 
+try:  # Optional dependency: only required for multi-agent CrewAI mode
+    from crewai import Agent
+
+    CREWAI_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    Agent = None  # type: ignore[assignment]
+    CREWAI_AVAILABLE = False
+
+
+def _require_agent() -> type:
+    """Return the CrewAI Agent class or raise a clear install error."""
+    if Agent is None:
+        raise RuntimeError(
+            "CrewAI is not installed. Install it with: pip install crewai"
+        )
+    return Agent
+
 
 def create_scenario_architect() -> Agent:
     """Stage 0: Scenario Architect — builds the infrastructure context."""
-    return Agent(
+    agent_cls = _require_agent()
+    return agent_cls(
         role="Scenario Architect",
         goal="Create comprehensive, realistic incident scenarios with hidden root causes",
         backstory="""You are a senior infrastructure architect with 15 years of experience
@@ -37,7 +53,8 @@ def create_scenario_architect() -> Agent:
 
 def create_alert_generator() -> Agent:
     """Stage 1: Alert Generator — emits Alertmanager-compliant JSON."""
-    return Agent(
+    agent_cls = _require_agent()
+    return agent_cls(
         role="Monitoring System Simulator",
         goal="Generate schema-valid Alertmanager v4 JSON alerts with production namespace",
         backstory="""You are a monitoring infrastructure expert who has configured Prometheus,
@@ -53,7 +70,8 @@ def create_alert_generator() -> Agent:
 
 def create_sre_mentor() -> Agent:
     """Stage 2: Senior SRE Mentor — guides triage through Socratic questioning."""
-    return Agent(
+    agent_cls = _require_agent()
+    return agent_cls(
         role="Senior SRE Mentor",
         goal="Guide engineers through systematic incident triage using Socratic questioning",
         backstory="""You are a Staff SRE with 12 years at Google and Netflix. You believe
@@ -69,7 +87,8 @@ def create_sre_mentor() -> Agent:
 
 def create_rca_analyst() -> Agent:
     """Stage 3: Log & Metrics Analyst — crafts graduated-degradation evidence."""
-    return Agent(
+    agent_cls = _require_agent()
+    return agent_cls(
         role="Log & Metrics Analysis Expert",
         goal="Generate realistic log artifacts with subtle clues pointing to hidden root causes",
         backstory="""You are a forensic log analyst who has investigated hundreds of production
@@ -85,7 +104,8 @@ def create_rca_analyst() -> Agent:
 
 def create_remediation_engineer() -> Agent:
     """Stage 4: Expert DevOps Engineer — produces kubectl commands with rollback."""
-    return Agent(
+    agent_cls = _require_agent()
+    return agent_cls(
         role="Expert DevOps/SRE Engineer",
         goal="Generate executable kubectl remediation commands with mandatory rollback procedures",
         backstory="""You are a Kubernetes administrator who has handled 200+ production
@@ -101,7 +121,8 @@ def create_remediation_engineer() -> Agent:
 
 def create_incident_commander() -> Agent:
     """Stage 5: Incident Commander — triple-audience communication."""
-    return Agent(
+    agent_cls = _require_agent()
+    return agent_cls(
         role="Incident Commander",
         goal="Craft audience-appropriate incident communications for technical, business, and executive stakeholders",
         backstory="""You are a crisis communication specialist who has managed incident
@@ -117,7 +138,8 @@ def create_incident_commander() -> Agent:
 
 def create_postmortem_writer() -> Agent:
     """Stage 6: Technical Writer — blameless post-mortem synthesis."""
-    return Agent(
+    agent_cls = _require_agent()
+    return agent_cls(
         role="Technical Writer",
         goal="Synthesize blameless post-mortems with SMART action items from all prior stages",
         backstory="""You are a technical writer specializing in SRE documentation. You follow

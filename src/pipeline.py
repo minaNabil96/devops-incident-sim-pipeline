@@ -20,8 +20,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from crewai import Crew, Process
-
 from src.agents.definitions import AGENT_REGISTRY
 from src.config.settings import PROJECT_ROOT
 from src.core.llm import LLMClient
@@ -98,7 +96,7 @@ class SREIncidentPipeline:
     ) -> None:
         # Lazy LLM initialization: the client is only constructed when a stage
         # actually runs, so pipeline construction stays testable without a
-        # configured DAHL_TOKEN.
+        # configured NVIDIA_API_KEY.
         self._llm_client = llm_client
         self._llm: Optional[LLMClient] = None
         self.context: dict[str, str] = {}
@@ -111,10 +109,28 @@ class SREIncidentPipeline:
             self._llm = self._llm_client or LLMClient()
         return self._llm
 
+    @property
+    def _output_dir(self) -> Path:
+        output_dir = PROJECT_ROOT / "outputs"
+        output_dir.mkdir(exist_ok=True)
+        return output_dir
+
+    def _stage_file(self, stage_name: str) -> Path:
+        return self._output_dir / f"{stage_name}_output.txt"
+
+    def load_disk_context(self) -> dict[str, str]:
+        """Load any previously completed stage outputs from disk into context."""
+        for i, stage_name in enumerate(self.STAGE_NAMES):
+            path = self._stage_file(stage_name)
+            if path.exists() and path.stat().st_size > 0:
+                self.context[f"output_stage_{i}"] = path.read_text(encoding="utf-8")
+        return self.context
+
     def run_stage(
         self,
         stage_index: int,
         params: dict[str, Any],
+        resume: bool = False,
     ) -> StageResult:
         """
         Execute a single pipeline stage.
@@ -123,9 +139,30 @@ class SREIncidentPipeline:
         2. Call LLM with SSE streaming
         3. Store output in context for next stage
         4. Return structured result
+
+        If ``resume`` is True and the stage's output already exists on disk,
+        it is loaded instead of making a new LLM call.
         """
         stage_name = self.STAGE_NAMES[stage_index]
         start_time = time.time()
+
+        # Resume short-circuit: reuse an existing, non-empty stage output.
+        if resume:
+            disk_file = self._stage_file(stage_name)
+            if disk_file.exists() and disk_file.stat().st_size > 0:
+                content = disk_file.read_text(encoding="utf-8")
+                self.context[f"output_stage_{stage_index}"] = content
+                elapsed = time.time() - start_time
+                result = StageResult(
+                    stage_index=stage_index,
+                    stage_name=stage_name,
+                    output=content,
+                    execution_time_s=elapsed,
+                    token_count=0,
+                )
+                if self.on_stage_complete:
+                    self.on_stage_complete(result)
+                return result
 
         # Build prior outputs context
         prior_outputs = {
@@ -144,9 +181,7 @@ class SREIncidentPipeline:
         self.context[f"output_stage_{stage_index}"] = response.content
 
         # Save to disk
-        output_dir = PROJECT_ROOT / "outputs"
-        output_dir.mkdir(exist_ok=True)
-        output_file = output_dir / f"{stage_name}_output.txt"
+        output_file = self._stage_file(stage_name)
         output_file.write_text(response.content, encoding="utf-8")
 
         elapsed = time.time() - start_time
@@ -167,17 +202,24 @@ class SREIncidentPipeline:
     def run_full_pipeline(
         self,
         params: dict[str, Any],
+        resume: bool = False,
     ) -> PipelineResult:
         """
         Execute all 7 stages sequentially (deterministic engine).
+
+        If ``resume`` is True, previously completed stages are loaded from
+        disk and skipped, so an interrupted run can continue where it left off.
 
         Returns a PipelineResult with all stage outputs and metadata.
         """
         start_time = time.time()
         result = PipelineResult()
 
+        if resume:
+            self.load_disk_context()
+
         for i in range(len(self.STAGE_NAMES)):
-            stage_result = self.run_stage(i, params)
+            stage_result = self.run_stage(i, params, resume=resume)
             result.stages.append(stage_result)
             result.total_tokens += stage_result.token_count
 
@@ -186,13 +228,23 @@ class SREIncidentPipeline:
 
         return result
 
-    def build_crew(self, params: dict[str, Any]) -> Crew:
+    def build_crew(self, params: dict[str, Any]) -> "Crew":
         """
         Assemble a CrewAI Crew from the 7 agent/task definitions.
 
         The resulting Crew can be executed with ``crew.kickoff()`` to run the
         full multi-agent simulation through CrewAI's orchestration layer.
+
+        Raises:
+            RuntimeError: If CrewAI is not installed.
         """
+        try:  # Lazy import: CrewAI only required for multi-agent mode
+            from crewai import Crew, Process
+        except ImportError as exc:
+            raise RuntimeError(
+                "CrewAI is not installed. Install it with: pip install crewai"
+            ) from exc
+
         agents = [factory() for factory in AGENT_REGISTRY.values()]
         tasks = [factory(params) for factory in TASK_REGISTRY.values()]
 
@@ -289,6 +341,7 @@ class SREIncidentPipeline:
 def run_simulation(
     params: Optional[dict[str, Any]] = None,
     on_stage_complete: Optional[Callable[[StageResult], None]] = None,
+    resume: bool = False,
 ) -> PipelineResult:
     """
     Convenience function to run a complete simulation.
@@ -296,6 +349,7 @@ def run_simulation(
     Args:
         params: Scenario parameters (defaults to SimulationDefaults)
         on_stage_complete: Callback fired after each stage completes
+        resume: If True, reuse completed stage outputs already on disk
 
     Returns:
         PipelineResult with all outputs and metadata
@@ -308,7 +362,7 @@ def run_simulation(
         params["hidden_cause"] = DEFAULT_HIDDEN_CAUSE
 
     pipeline = SREIncidentPipeline(on_stage_complete=on_stage_complete)
-    return pipeline.run_full_pipeline(params)
+    return pipeline.run_full_pipeline(params, resume=resume)
 
 
 __all__ = [

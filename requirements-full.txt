@@ -1,0 +1,10 @@
+# Full dependency set including CrewAI multi-agent orchestration + tests.
+# Also used by the Dockerfile for the HF Spaces / local container build.
+-r requirements.txt
+
+# Orchestration (optional at runtime; required for build_crew / run_crewai)
+crewai>=0.86.0
+crewai-tools>=0.20.0
+
+# Testing
+pytest>=7.4.0

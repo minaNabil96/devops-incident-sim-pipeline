@@ -1,0 +1,48 @@
+**HORIZON: Immediate (0‑5 min)**  
+**Strategy:** Retrieve the current Redis eviction rate and memory fragmentation ratio, and verify whether the Redis pods have experienced OOMKilled events or restart loops.
+
+```bash
+# Step 1: Identify the Redis pod(s) in the production namespace
+kubectl get pods -n production -l app=redis-cache --no-headers -o custom-columns="NAME:.metadata.name"
+
+# Step 2: Store the pod name(s) for later use (assuming a single pod redis-cache-01)
+REDIS_POD=$(kubectl get pods -n production -l app=redis-cache -o jsonpath='{.items[0].metadata.name}')
+echo "Redis pod: $REDIS_POD"
+
+# Step 3: Capture initial Redis INFO metrics (evicted_keys, used_memory, mem_fragmentation_ratio)
+kubectl exec -n production "$REDIS_POD" -- redis-cli INFO | grep -E 'evicted_keys|used_memory|mem_fragmentation_ratio' > /tmp/redis_info_initial.txt
+cat /tmp/redis_info_initial.txt
+
+# Step 4: Wait a short interval (10 s) to compute a rate
+sleep 10
+
+# Step 5: Capture Redis INFO metrics again after the interval
+kubectl exec -n production "$REDIS_POD" -- redis-cli INFO | grep -E 'evicted_keys|used_memory|mem_fragmentation_ratio' > /tmp/redis_info_later.txt
+cat /tmp/redis_info_later.txt
+
+# Step 6: Calculate eviction rate (evicted_keys per second)
+EVIC_INIT=$(awk -F: '/evicted_keys/ {print $2}' /tmp/redis_info_initial.txt | tr -d ' ')
+EVIC_LATER=$(awk -F: '/evicted_keys/ {print $2}' /tmp/redis_info_later.txt | tr -d ' ')
+EVIC_RATE=$(( (EVIC_LATER - EVIC_INIT) / 10 ))
+echo "Eviction rate: $EVIC_RATE keys/sec"
+
+# Step 7: Extract memory fragmentation ratio (latest value)
+FRAG_INIT=$(awk -F: '/mem_fragmentation_ratio/ {print $2}' /tmp/redis_info_initial.txt | tr -d ' ')
+FRAG_LATER=$(awk -F: '/mem_fragmentation_ratio/ {print $2}' /tmp/redis_info_later.txt | tr -d ' ')
+# Use the later value as the current ratio
+echo "Memory fragmentation ratio: $FRAG_LATER"
+
+# Step 8: Check Redis pod restart count
+kubectl get pod "$REDIS_POD" -n production -o jsonpath='{.status.containerStatuses[0].restartCount}'
+echo "Restart count: $(kubectl get pod "$REDIS_POD" -n production -o jsonpath='{.status.containerStatuses[0].restartCount}')"
+
+# Step 9: Look for OOMKilled events in the pod's recent events
+kubectl get events -n production --field-selector involvedObject.name="$REDIS_POD" | grep -i OOMKilled || echo "No OOMKilled events found."
+```
+
+**Rollback:**  
+No changes are made in this horizon; therefore no rollback is required. If any diagnostic command were to be altered in the future, re‑run the same steps to verify the state returned to baseline.  
+
+```bash
+# No rollback needed – diagnostics only
+```

@@ -58,9 +58,9 @@ Each stage has a dedicated `.j2` template with:
 - **Hard constraints** embedded in natural language (namespace enforcement, schema requirements)
 - **Conditional logic** using Jinja2 `{% if %}` blocks (e.g., multi-audience communication)
 
-### Layer 2: LLM API Integration (Dahl Global / Kimi-K2.6)
+### Layer 2: LLM API Integration (NVIDIA build API / `mistralai/mistral-medium-3.5-128b`)
 
-**Challenge 1 — Cloudflare 524 Timeout:** The Dahl API terminated requests exceeding 30 seconds with a Cloudflare 524 (origin timeout) error, as the Kimi-K2.6 model can take 60–180s to generate a full response.
+**Challenge 1 — Long-generation timeout:** Long streaming generations over HTTP can be terminated by intermediate gateways/origin timeouts, as the Kimi-K2.6 model can take 60–180s to generate a full response.
 
 **Solution — SSE Streaming:**
 ```python
@@ -103,9 +103,9 @@ To support both Colab and local execution without hardcoding secrets:
 def get_api_key():
     try:
         from google.colab import userdata
-        return userdata.get('DAHL_TOKEN')
+        return userdata.get('NVIDIA_API_KEY')
     except ImportError:
-        return os.getenv('DAHL_TOKEN')
+        return os.getenv('NVIDIA_API_KEY')
 ```
 
 ### Validation Protocol
@@ -152,7 +152,7 @@ The pipeline was tested against **20 structural compliance criteria** derived fr
 
 | Contribution | Impact |
 |-------------|--------|
-| SSE Streaming integration | Eliminated Cloudflare 524 timeouts entirely |
+| SSE Streaming integration | Eliminated long-generation timeouts entirely |
 | Regex `<think>` tag sanitizer | Produced clean, artifact-ready output from reasoning model |
 | Jinja2 chain-of-prompts with context injection | Achieved multi-stage coherence without fine-tuning |
 | Multi-environment API key resolution | Enabled Colab teaching + local production deployment from single codebase |
@@ -166,7 +166,7 @@ The pipeline was tested against **20 structural compliance criteria** derived fr
 |-----------|---------|
 | Python 3.12+ | Core pipeline engine and API integration |
 | Jinja2 3.1 | Template rendering with parameter injection |
-| Dahl API (Kimi-K2.6) | LLM inference with streaming support |
+| NVIDIA build API (`mistralai/mistral-medium-3.5-128b`) | LLM inference with streaming support |
 | Server-Sent Events | Real-time token collection from LLM |
 | Regex (re.DOTALL) | Post-processing cleanup of reasoning tags |
 | python-dotenv | Multi-environment secret management |
@@ -240,9 +240,9 @@ Prompt N = Jinja2.render(параметры + контекст[0..N-1])
 - **Жёсткими ограничениями** на естественном языке
 - **Условной логикой** через `{% if %}`
 
-### Уровень 2: LLM API (Dahl Global / Kimi-K2.6)
+### Уровень 2: LLM API (NVIDIA build API / `mistralai/mistral-medium-3.5-128b`)
 
-**Проблема 1 — Cloudflare 524 Timeout:** API завершал запросы дольше 30 секунд ошибкой Cloudflare 524.
+**Проблема 1 — Long-generation Timeout:** API завершал запросы дольше 30 секунд ошибкой long-generation timeouts.
 
 **Решение — SSE Streaming:** Конвертировал блокирующий запрос в инкрементальный сбор токенов с `stream=True` и таймаутом 300 секунд.
 
@@ -283,7 +283,7 @@ Prompt N = Jinja2.render(параметры + контекст[0..N-1])
 
 | Вклад | Влияние |
 |-------|---------|
-| SSE Streaming | Устранение Cloudflare 524 таймаутов |
+| SSE Streaming | Устранение long-generation timeouts таймаутов |
 | Regex очистка `<think>` | Чистый вывод из reasoning-модели |
 | Jinja2 chain-of-prompts | Многоэтапная связность без fine-tuning |
 | Мультисредовой API-ключ | Colab + локальный запуск из единого кода |
@@ -297,7 +297,7 @@ Prompt N = Jinja2.render(параметры + контекст[0..N-1])
 |-----------|-----------|
 | Python 3.12+ | Основной движок и интеграция с API |
 | Jinja2 3.1 | Рендеринг шаблонов с инъекцией параметров |
-| Dahl API (Kimi-K2.6) | LLM с поддержкой streaming |
+| NVIDIA build API (`mistralai/mistral-medium-3.5-128b`) | LLM с поддержкой streaming |
 | Server-Sent Events | Инкрементальный сбор токенов |
 | Regex (re.DOTALL) | Очистка reasoning-тегов |
 | python-dotenv | Мультисредовое управление секретами |

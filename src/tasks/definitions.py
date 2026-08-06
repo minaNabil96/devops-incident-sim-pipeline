@@ -9,9 +9,24 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from crewai import Task
-
 from src.agents.definitions import AGENT_REGISTRY
+
+try:  # Optional dependency: only required for multi-agent CrewAI mode
+    from crewai import Task
+
+    CREWAI_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    Task = None  # type: ignore[assignment]
+    CREWAI_AVAILABLE = False
+
+
+def _require_task() -> type:
+    """Return the CrewAI Task class or raise a clear install error."""
+    if Task is None:
+        raise RuntimeError(
+            "CrewAI is not installed. Install it with: pip install crewai"
+        )
+    return Task
 
 
 def _safe_int(value: Any, default: int) -> int:
@@ -24,7 +39,8 @@ def _safe_int(value: Any, default: int) -> int:
 def create_scenario_task(params: dict) -> Task:
     """Stage 0: Generate incident scenario."""
     agent = AGENT_REGISTRY[0]()
-    return Task(
+    task_cls = _require_task()
+    return task_cls(
         description=f"""
         Generate a comprehensive incident scenario using the render_prompt_template tool.
 
@@ -47,7 +63,8 @@ def create_scenario_task(params: dict) -> Task:
 def create_alert_task(params: dict) -> Task:
     """Stage 1: Generate Alertmanager JSON alert."""
     agent = AGENT_REGISTRY[1]()
-    return Task(
+    task_cls = _require_task()
+    return task_cls(
         description=f"""
         Generate an Alertmanager v4 JSON alert using the render_prompt_template tool.
 
@@ -71,7 +88,8 @@ def create_alert_task(params: dict) -> Task:
 def create_triage_task(params: dict) -> Task:
     """Stage 2: Generate Socratic triage guide."""
     agent = AGENT_REGISTRY[2]()
-    return Task(
+    task_cls = _require_task()
+    return task_cls(
         description=f"""
             Generate a triage investigation guide using the render_prompt_template tool.
 
@@ -96,7 +114,8 @@ def create_triage_task(params: dict) -> Task:
 def create_rca_task(params: dict) -> Task:
     """Stage 3: Generate RCA evidence artifacts."""
     agent = AGENT_REGISTRY[3]()
-    return Task(
+    task_cls = _require_task()
+    return task_cls(
         description=f"""
             Generate RCA evidence artifacts using the render_prompt_template tool.
 
@@ -121,7 +140,8 @@ def create_rca_task(params: dict) -> Task:
 def create_remediation_task(params: dict) -> Task:
     """Stage 4: Generate kubectl remediation commands."""
     agent = AGENT_REGISTRY[4]()
-    return Task(
+    task_cls = _require_task()
+    return task_cls(
         description=f"""
             Generate remediation commands using the render_prompt_template tool.
 
@@ -147,7 +167,8 @@ def create_communication_task(params: dict) -> Task:
     """Stage 5: Generate multi-audience communications."""
     agent = AGENT_REGISTRY[5]()
     max_words = _params_i(params, "max_words", 150)
-    return Task(
+    task_cls = _require_task()
+    return task_cls(
         description=f"""
             Generate incident communications using the render_prompt_template tool.
 
@@ -172,7 +193,8 @@ def create_communication_task(params: dict) -> Task:
 def create_postmortem_task(params: dict) -> Task:
     """Stage 6: Generate blameless post-mortem."""
     agent = AGENT_REGISTRY[6]()
-    return Task(
+    task_cls = _require_task()
+    return task_cls(
         description=f"""
             Generate a blameless post-mortem using the render_prompt_template tool.
 

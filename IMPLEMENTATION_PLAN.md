@@ -9,8 +9,8 @@
 ### 1.1 Existing System
 The current project is a Jupyter notebook (`devops_dahl.ipynb`) implementing a 7-stage prompt engineering pipeline for SRE incident simulation. It uses:
 - **Jinja2** for prompt templating (7 `.j2` templates)
-- **Dahl Global API** (`moonshotai/Kimi-K2.6`) for LLM inference
-- **SSE Streaming** to bypass Cloudflare 524 timeouts
+- **NVIDIA build API** (`mistralai/mistral-medium-3.5-128b`) for LLM inference
+- **SSE Streaming** to bypass long-generation timeouts
 - **Regex sanitization** to strip `<think>...</think>` reasoning tags
 - **Chain-of-prompts** architecture where each stage's output is injected into the next
 
@@ -132,7 +132,7 @@ def _detect_environment() -> str:
 
 def _resolve_api_key() -> str:
     """
-    Resolve DAHL_TOKEN through three-tier fallback chain:
+    Resolve NVIDIA_API_KEY through three-tier fallback chain:
     1. Google Colab Secrets (if in Colab)
     2. .env file (loaded at import time)
     3. Environment variable
@@ -143,14 +143,14 @@ def _resolve_api_key() -> str:
     if env == "colab":
         try:
             from google.colab import userdata
-            key = userdata.get("DAHL_TOKEN")
+            key = userdata.get("NVIDIA_API_KEY")
             if key:
                 return key
         except Exception:
             pass
 
     # Tier 2: .env file
-    key = os.getenv("DAHL_TOKEN")
+    key = os.getenv("NVIDIA_API_KEY")
     if key:
         return key
 
@@ -170,9 +170,9 @@ class APIKeyResolution(BaseModel):
 
 
 class APIConfig(BaseModel):
-    """Dahl Global API configuration."""
-    base_url: str = "https://inference.dahl.global/v1/chat/completions"
-    model: str = "moonshotai/Kimi-K2.6"
+    """NVIDIA build.nvidia.com API configuration."""
+    base_url: str = "https://integrate.api.nvidia.com/v1/chat/completions"
+    model: str = "mistralai/mistral-medium-3.5-128b"
     max_tokens: int = 3000
     temperature: float = 0.1
     top_p: float = 0.9
@@ -234,13 +234,13 @@ class SimulationDefaults(BaseModel):
 
 ### 3.2 `src/core/llm.py`
 
-**Purpose**: HTTP client for Dahl API with SSE streaming and regex sanitization.
+**Purpose**: HTTP client for NVIDIA build API with SSE streaming and regex sanitization.
 
 **Content Requirements**:
 
 ```python
 """
-LLM Client for the Dahl Global API (Kimi-K2.6).
+LLM Client for the NVIDIA build.nvidia.com API (mistralai/mistral-medium-3.5-128b).
 
 Handles SSE streaming, retry logic, and post-processing sanitization
 (removal of <think> reasoning tags).
@@ -271,7 +271,7 @@ class LLMResponse:
 
 class LLMClient:
     """
-    HTTP client for the Dahl Global API using SSE streaming.
+    HTTP client for the NVIDIA build.nvidia.com API using SSE streaming.
 
     Implements a three-tier resilience chain:
     1. Primary request with configurable timeout
@@ -285,7 +285,7 @@ class LLMClient:
         api_key = _resolve_api_key()
         if not api_key:
             raise ValueError(
-                "DAHL_TOKEN not found. Set via:\n"
+                "NVIDIA_API_KEY not found. Set via:\n"
                 "  Colab Secrets | .env file | Environment variable"
             )
 
@@ -301,10 +301,10 @@ class LLMClient:
         max_retries: Optional[int] = None,
     ) -> LLMResponse:
         """
-        Generate a completion via the Dahl API with SSE streaming.
+        Generate a completion via the NVIDIA build API with SSE streaming.
 
         Collects incremental token deltas over Server-Sent Events,
-        bypassing Cloudflare 524 timeouts on long generation sequences.
+        bypassing long-generation timeouts on long generation sequences.
 
         Post-processes reasoning model leakage (<think>...</think> tags)
         via regex sanitization.
@@ -403,7 +403,7 @@ class LLMClient:
 
 **Critical Notes**:
 - The `_strip_reasoning` method is CRITICAL — it removes `<think>...</think>` tags that Kimi-K2.6 emits
-- SSE streaming is REQUIRED — do not use non-streaming requests (they hit Cloudflare 524)
+- SSE streaming is REQUIRED — do not use non-streaming requests (they hit long-generation timeouts)
 - The `LLMResponse` dataclass must be importable by tests
 
 ---
@@ -2226,7 +2226,7 @@ The Alertmanager JSON and kubectl commands MUST use `namespace: production`. Thi
 2. Post-hoc validation in `AlertmanagerValidator`
 
 ### 5.4 SSE Streaming
-The LLM client MUST use SSE streaming (`stream=True`). Non-streaming requests will hit Cloudflare 524 timeouts.
+The LLM client MUST use SSE streaming (`stream=True`). Non-streaming requests will hit long-generation timeouts.
 
 ### 5.5 Regex Sanitization
 All LLM outputs MUST pass through `_strip_reasoning()` to remove `<think>...</think>` tags.

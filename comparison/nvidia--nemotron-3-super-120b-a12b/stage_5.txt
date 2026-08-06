@@ -1,0 +1,8 @@
+:mag: *Investigating Redis performance* (production namespace)
+
+- Identified pod: `redis-cache-01`
+- Captured initial INFO metrics (evicted_keys, used_memory, mem_fragmentation_ratio)
+- Waiting 10 s to compute eviction rate
+- Next: calculate eviction rate, check fragmentation ratio, restart count, and look for OOMKilled events
+
+Stay tuned for the results.

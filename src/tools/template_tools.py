@@ -3,18 +3,38 @@ CrewAI tool wrappers for template and file operations.
 
 These tools are exposed to CrewAI agents for dynamic prompt generation
 and output persistence.
+
+CrewAI is an optional dependency for the multi-agent mode: if it is not
+installed, the decorator below degrades to a no-op identity function so
+the deterministic engine and Streamlit app remain fully usable.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
-
-from crewai.tools import tool
+from typing import Any, Callable
 
 from src.config.settings import PROJECT_ROOT
 from src.core.renderer import TemplateRenderer
+
+try:  # Optional dependency
+    from crewai.tools import tool as _crewai_tool
+
+    CREWAI_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised when crewai is absent
+    CREWAI_AVAILABLE = False
+
+    def _crewai_tool(*args: Any, **kwargs: Any) -> Callable:
+        """No-op decorator fallback when CrewAI is not installed."""
+        if len(args) == 1 and callable(args[0]):
+            return args[0]
+        return lambda fn: fn
+
+
+# Identity-compatible alias: behaves as @tool when CrewAI is present,
+# as a plain identity decorator otherwise.
+tool = _crewai_tool
 
 
 @tool("Render Prompt Template")
@@ -75,8 +95,8 @@ def load_prior_stage_output(stage_name: str) -> str:
     return ""
 
 
-# Convenience re-export of the project root for external tooling
 __all__ = [
+    "CREWAI_AVAILABLE",
     "render_prompt_template",
     "save_stage_output",
     "load_prior_stage_output",

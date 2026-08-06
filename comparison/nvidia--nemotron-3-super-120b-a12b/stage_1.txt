@@ -1,0 +1,26 @@
+```json
+{
+  "receiver": "pagerduty",
+  "status": "firing",
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "HighErrorRate",
+        "severity": "critical",
+        "namespace": "production",
+        "service": "payment-gateway-service",
+        "job": "payment-gateway",
+        "instance": "10.0.1.23:8080",
+        "pod": "payment-gateway-service-5d7c9f6b7c-abcde",
+        "container": "payment-gateway"
+      },
+      "annotations": {
+        "summary": "High error rate detected on payment-gateway-service",
+        "description": "Error rate > 5% for the last 5m, current value 7.8%. Latency increased to 620ms. Redis OOM causing failures.",
+        "runbook_url": "https://runbooks.securebank.pro/payment-gateway-high-error-rate",
+        "dashboard_url": "https://grafana.securebank.pro/d/payment-gateway-overview"
+      },
+      "startsAt": "2025-09-24T14:35:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://prometheus.securebank.pro:9090/graph?g0.expr=rate(http_requests_total%7Bjob%3D%22payment-gateway%22%2Cstatus%3D%5E5

@@ -38,7 +38,7 @@ def _detect_environment() -> str:
 
 def _resolve_api_key() -> str:
     """
-    Resolve DAHL_TOKEN through three-tier fallback chain:
+    Resolve NVIDIA_API_KEY through three-tier fallback chain:
     1. Google Colab Secrets (if in Colab)
     2. .env file (loaded at import time)
     3. Environment variable
@@ -49,14 +49,14 @@ def _resolve_api_key() -> str:
     if env == "colab":
         try:
             from google.colab import userdata
-            key = userdata.get("DAHL_TOKEN")
+            key = userdata.get("NVIDIA_API_KEY")
             if key:
                 return key
         except Exception:
             pass
 
     # Tier 2: .env file (already loaded by load_dotenv)
-    key = os.getenv("DAHL_TOKEN")
+    key = os.getenv("NVIDIA_API_KEY")
     if key:
         return key
 
@@ -77,10 +77,10 @@ class APIKeyResolution(BaseModel):
 
 
 class APIConfig(BaseModel):
-    """Dahl Global API configuration."""
+    """NVIDIA build.nvidia.com API configuration (OpenAI-compatible)."""
 
-    base_url: str = "https://inference.dahl.global/v1/chat/completions"
-    model: str = "moonshotai/Kimi-K2.6"
+    base_url: str = "https://integrate.api.nvidia.com/v1/chat/completions"
+    model: str = "mistralai/mistral-medium-3.5-128b"
     max_tokens: int = 3000
     temperature: float = 0.1
     top_p: float = 0.9

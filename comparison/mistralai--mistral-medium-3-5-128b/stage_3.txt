@@ -1,0 +1,48 @@
+---
+
+### **SECTION 1 — ARTIFACTS**
+
+```json
+{"timestamp": "2023-11-15T10:00:00Z", "level": "INFO", "service": "payment-gateway-service", "message": "Request processed", "latency_ms": 180, "status": 200, "redis_hit": true, "ip": "192.168.1.100"}
+{"timestamp": "2023-11-15T10:05:00Z", "level": "INFO", "service": "payment-gateway-service", "message": "Request processed", "latency_ms": 220, "status": 200, "redis_hit": false, "ip": "192.168.1.101"}
+{"timestamp": "2023-11-15T10:10:00Z", "level": "WARN", "service": "payment-gateway-service", "message": "Redis latency spike", "latency_ms": 1200, "redis_evicted_keys": 5, "ip": "10.0.0.1"}
+{"timestamp": "2023-11-15T10:12:00Z", "level": "WARN", "service": "payment-gateway-service", "message": "High request volume from new IPs", "requests_per_sec": 45, "unique_ips": 23, "status": 200}
+{"timestamp": "2023-11-15T10:15:00Z", "level": "ERROR", "service": "payment-gateway-service", "message": "Redis connection timeout", "latency_ms": 5000, "status": 503, "ip": "10.0.0.2"}
+{"timestamp": "2023-11-15T10:16:00Z", "level": "WARN", "service": "redis", "message": "Memory usage critical", "used_memory": "14.8GB", "evicted_keys": 120, "rejected_connections": 3}
+{"timestamp": "2023-11-15T10:18:00Z", "level": "ERROR", "service": "payment-gateway-service", "message": "PostgreSQL lock wait timeout", "latency_ms": 8200, "status": 503, "query": "SELECT * FROM transactions WHERE user_id = ?", "ip": "10.0.0.3"}
+{"timestamp": "2023-11-15T10:20:00Z", "level": "ERROR", "service": "payment-gateway-service", "message": "Rate limit exceeded", "status": 429, "requests_per_sec": 58, "ip": "10.0.0.4"}
+{"timestamp": "2023-11-15T10:22:00Z", "level": "ERROR", "service": "redis", "message": "OOM error, evicting keys", "evicted_keys": 340, "used_memory": "15.1GB"}
+{"timestamp": "2023-11-15T10:25:00Z", "level": "ERROR", "service": "payment-gateway-service", "message": "PostgreSQL connection pool exhausted", "status": 503, "active_connections": 98, "max_connections": 100}
+{"timestamp": "2023-11-15T10:28:00Z", "level": "WARN", "service": "payment-gateway-service", "message": "Unusual IP pattern detected", "unique_ips": 42, "requests_per_sec": 62, "status": 200}
+{"timestamp": "2023-11-15T10:30:00Z", "level": "ERROR", "service": "payment-gateway-service", "message": "Redis command rejected", "status": 503, "error": "NOMEM", "ip": "10.0.0.5"}
+{"timestamp": "2023-11-15T10:32:00Z", "level": "ERROR", "service": "postgresql", "message": "Long-running query detected", "duration_ms": 7500, "query": "UPDATE transactions SET status = 'completed' WHERE id IN (...)", "lock_waits": 15}
+{"timestamp": "2023-11-15T10:35:00Z", "level": "ERROR", "service": "payment-gateway-service", "message": "Payment failure for user", "status": 500, "user_id": "legit_user_123", "error": "Cache miss, DB timeout"}
+{"timestamp": "2023-11-15T10:40:00Z", "level": "CRITICAL", "service": "redis", "message": "Memory limit reached, evictions accelerating", "used_memory": "15.2GB", "evicted_keys": 1200}
+```
+
+---
+
+### **SECTION 2 — ANALYSIS**
+
+- **Timeline of Degradation**:
+  - **10:00–10:10**: Normal operation with occasional Redis cache misses and slight latency increases.
+  - **10:12–10:20**: Sudden spike in request volume from multiple new IPs, coinciding with Redis latency spikes and evictions. Error rates begin climbing (503s, 429s).
+  - **10:22–10:30**: Redis memory pressure peaks (15.2GB), leading to OOM errors and rejected connections. PostgreSQL shows lock waits and connection pool exhaustion.
+  - **10:35+**: Legitimate user requests start failing due to cache misses and database timeouts.
+
+- **Key Anomalies**:
+  - Unusually high **requests per second** (50+) from **distributed IPs** (42 unique) with no prior history.
+  - **Redis evictions** and **OOM errors** correlate with the surge in traffic, suggesting memory pressure is a secondary effect of increased load.
+  - **PostgreSQL lock waits** and **long-running queries** appear after Redis degradation, indicating cascading failures.
+  - **429 errors** (rate limiting) are logged, but the traffic volume exceeds expected thresholds without clear rate-limiting enforcement.
+
+- **Component Behavior**:
+  - **Redis**: Memory usage grows rapidly, evictions accelerate, and commands are rejected (`NOMEM`).
+  - **PostgreSQL**: Lock contention and connection pool exhaustion suggest increased query load, possibly due to cache misses.
+  - **Application**: Errors shift from Redis timeouts to database failures, implying dependency failures are propagating upstream.
+
+---
+
+### **SECTION 3 — NEXT STEP**
+
+*How would you verify whether the surge in requests from distributed IPs is bypassing the rate-limiting mechanism, and what logs or metrics would you examine to confirm this?*

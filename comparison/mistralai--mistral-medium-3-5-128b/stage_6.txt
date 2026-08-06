@@ -1,0 +1,135 @@
+```markdown
+# **Blameless Post-Mortem: SecureBank Pro Payment Gateway Degradation**
+**Post-Mortem ID:** PM-2023-1115-001
+**Status:** Resolved
+**Severity:** Critical (SEV-1)
+**Duration:** 28 minutes (09:12–09:40 UTC)
+**Service:** `payment-gateway-service`
+**On-Call Team:** Payments Team
+
+---
+
+---
+
+## **1. Executive Summary**
+On **2023-11-15**, SecureBank Pro experienced a **28-minute degradation** of the `payment-gateway-service`, causing **42% payment failures** (baseline: 0.1%) and **P99 latency spikes to 8.2s** (baseline: 200ms). The incident was triggered by a **distributed traffic surge** (50+ requests/sec from 42 unique IPs) that **bypassed rate-limiting**, leading to **Redis memory exhaustion (15.2GB)** and **PostgreSQL connection pool depletion**. Mitigation involved **blocking malicious IPs at the ingress level** and **scaling Redis/PostgreSQL resources**. No data loss occurred, but **~50% of payment requests failed** globally.
+
+**Root Cause:** A **misconfigured WAF rule** allowed high-volume requests from new IPs to bypass the **ALB’s rate-limiting (10 req/sec/IP)**, overwhelming Redis and PostgreSQL.
+
+---
+
+---
+
+## **2. Impact**
+| **Category**       | **Details**                                                                 |
+|--------------------|-----------------------------------------------------------------------------|
+| **User-Facing**    | 50% of payment requests failed with `503 Service Unavailable` or `429 Too Many Requests`. Mobile app and corporate batch payments were delayed. |
+| **Business**       | **~6,250 transactions/minute failed** (50% of 12,500 TPS). Potential revenue impact from delayed corporate payments. |
+| **Duration**       | **28 minutes** (09:12–09:40 UTC).                                          |
+| **Geographic Scope** | Global (no region-specific outage).                                       |
+
+---
+
+---
+
+## **3. Timeline**
+| **Time (UTC)**       | **Event**                                                                                     | **Detected By**               |
+|----------------------|---------------------------------------------------------------------------------------------|-------------------------------|
+| 09:12                | Prometheus alert `HighPaymentGatewayErrorRate` fired (42% errors, P99 latency 8.2s).       | PagerDuty (Payments Team)     |
+| 09:15                | Incident declared. Redis memory at **15.2GB** (evictions: 5,000 keys/sec).                 | Grafana + Prometheus          |
+| 09:18                | Logs show **unusual IP pattern** (42 unique IPs, 62 req/sec).                                | ELK Stack                     |
+| 09:20                | PostgreSQL connection pool exhausted (98/100 connections).                                   | PostgreSQL Metrics            |
+| 09:22                | Redis OOM errors (`NOMEM`) and rejected connections.                                         | Redis Logs                    |
+| 09:25                | Ingress logs confirm **rate-limiting bypass** (no `429` headers for offending IPs).         | Ingress-Nginx Logs            |
+| 09:28                | **Mitigation Step 1:** Blocked top 5 offending IPs (`10.0.0.1-5`) at ingress level.         | Payments Team                 |
+| 09:30                | **Mitigation Step 2:** Scaled Redis to 3 replicas; increased `maxmemory` to 16GB.          | Payments Team                 |
+| 09:35                | PostgreSQL connection pool increased to 200.                                                 | Payments Team                 |
+| 09:40                | Error rate dropped to **<1%**, latency returned to baseline (200ms). Incident resolved.     | Prometheus + Grafana          |
+
+**Total Duration:** **28 minutes**
+
+---
+
+---
+
+## **4. Root Cause Analysis**
+### **Direct Cause**
+A **misconfigured WAF rule** in the ALB allowed **high-volume requests from 42 unique IPs** to bypass the **10 req/sec/IP rate limit**. This surge:
+1. **Overwhelmed Redis**, causing:
+   - Memory usage to spike to **15.2GB** (limit: 16GB).
+   - **Eviction storms** (1,200 keys/sec), leading to cache misses.
+   - `NOMEM` errors and rejected connections.
+2. **Cascaded to PostgreSQL**:
+   - Cache misses forced **synchronous DB queries**, increasing load.
+   - **Lock contention** and **connection pool exhaustion** (98/100 connections).
+3. **Propagated to the application**:
+   - `payment-gateway-service` returned **503s (Redis/PostgreSQL timeouts)** and **429s (rate-limiting)**.
+   - **Pod restarts** (12 in 30 min) due to OOM kills.
+
+### **Why It Happened**
+- The **WAF rule** for rate-limiting was **not applied to the new IP range** (likely a misconfiguration during a recent ALB update).
+- **Redis memory limits** were set to **16GB per node**, but the **eviction policy (`allkeys-lru`)** was not aggressive enough to handle the sudden load.
+- **PostgreSQL connection pool** was **static (100 connections)**, unable to scale with the surge.
+
+---
+
+---
+
+## **5. Contributing Factors**
+| **Factor**                          | **Description**                                                                 |
+|-------------------------------------|---------------------------------------------------------------------------------|
+| **Lack of IP Whitelisting**         | No pre-approved IP list for high-volume clients (e.g., corporate batch services). |
+| **Insufficient Redis Monitoring**   | Alerts for Redis memory usage were **not tied to eviction rates**.               |
+| **Static PostgreSQL Pool**          | Connection pool did not auto-scale with traffic spikes.                         |
+| **Missing WAF Validation**          | No automated checks to verify WAF rules post-deployment.                        |
+| **No Circuit Breakers**             | `payment-gateway-service` did not **fail fast** when Redis/PostgreSQL degraded. |
+
+---
+
+---
+
+## **6. Action Items**
+| **ID** | **Description**                                                                 | **Owner**          | **Priority** | **Due Date**       |
+|--------|---------------------------------------------------------------------------------|--------------------|--------------|--------------------|
+| AI-1   | **Fix WAF rule** to enforce **10 req/sec/IP rate-limiting** for all traffic.     | Security Team      | P0           | 2023-11-18         |
+| AI-2   | **Implement Redis auto-scaling** (horizontal) with **eviction rate alerts**.     | DevOps Team        | P0           | 2023-11-22         |
+| AI-3   | **Add PostgreSQL connection pool auto-scaling** (max 300 connections).          | Database Team      | P1           | 2023-11-25         |
+| AI-4   | **Deploy circuit breakers** in `payment-gateway-service` for Redis/PostgreSQL.   | Payments Team      | P1           | 2023-11-28         |
+
+---
+
+---
+
+## **7. Lessons Learned**
+### **What Went Well**
+✅ **Rapid Detection:** Prometheus + Grafana alerts triggered within **3 minutes** of degradation.
+✅ **Effective Triage:** Team quickly identified **Redis memory pressure** and **PostgreSQL locks** as secondary effects.
+✅ **Fast Mitigation:** Blocking IPs at the ingress level **reduced load within 5 minutes**.
+✅ **Blameless Culture:** Focus remained on **systemic issues** (WAF misconfiguration, static pools) rather than individuals.
+
+### **What to Improve**
+🔧 **WAF Rule Validation:** Add **automated tests** to verify rate-limiting rules post-deployment.
+🔧 **Dynamic Resource Scaling:** Implement **auto-scaling for Redis/PostgreSQL** to handle traffic spikes.
+🔧 **Dependency Resilience:** Add **circuit breakers** and **retry policies** for Redis/PostgreSQL calls.
+🔧 **IP Whitelisting:** Maintain a **pre-approved list** for high-volume clients (e.g., corporate batch services).
+
+### **What We Got Lucky With**
+🍀 **No Data Loss:** Despite PostgreSQL locks, **no transactions were corrupted**.
+🍀 **Ingress Logs Available:** Logs confirmed the **rate-limiting bypass**, enabling quick mitigation.
+🍀 **Redis Replicas Available:** Existing Redis cluster allowed **horizontal scaling** without downtime.
+
+---
+
+---
+
+## **8. Appendix: Key Metrics**
+| **Metric**               | **Peak Value** | **Baseline** | **Notes**                          |
+|--------------------------|----------------|--------------|------------------------------------|
+| **Error Rate**           | 42%            | 0.1%         | 503s (Redis/PostgreSQL) + 429s     |
+| **P99 Latency**          | 8.2s           | 200ms        | Caused by Redis/PostgreSQL timeouts|
+| **Redis Memory Usage**   | 15.2GB         | 6GB          | Evictions: 1,200 keys/sec          |
+| **PostgreSQL Connections** | 98/100       | 50/100       | Connection pool exhausted          |
+| **Affected Users**       | ~50%           | N/A          | Global impact                      |
+| **MTTR**                 | **28 minutes** | N/A          | From alert to resolution           |
+| **Transactions Failed** | ~6,250/min     | ~10/min      | 50% of 12,500 TPS                  |
+```

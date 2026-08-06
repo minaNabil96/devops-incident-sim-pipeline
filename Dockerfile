@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies to the user site-packages
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir --no-warn-script-location -r requirements.txt
+# Install dependencies to the user site-packages (full set incl. CrewAI)
+COPY requirements.txt requirements-full.txt ./
+RUN pip install --user --no-cache-dir --no-warn-script-location -r requirements-full.txt
 
 # Stage 2: Runtime
 FROM python:3.12-slim
@@ -31,12 +31,13 @@ ENV PYTHONUNBUFFERED=1
 # Copy application code
 COPY src/ ./src/
 COPY app/ ./app/
+COPY fonts/ ./fonts/
 
 # Create outputs directory
 RUN mkdir -p outputs
 
-# Basic dependencies for healthcheck (curl) available via python
-EXPOSE 8501
+# HF Spaces exposes the app on port 7860 by default
+EXPOSE 7860
 
 # Run Streamlit
-CMD ["streamlit", "run", "app/main.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+CMD ["streamlit", "run", "app/main.py", "--server.port=7860", "--server.address=0.0.0.0", "--server.headless=true"]

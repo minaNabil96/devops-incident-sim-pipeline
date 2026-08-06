@@ -1,0 +1,17 @@
+**Acknowledgment & Goal**  
+I see the firing alert for **payment-gateway-service** with a critical error rate (>5%) and elevated latency. The immediate goal is to confirm the symptoms, identify any abnormal resource or container state, and gather enough evidence to decide where to look next (e.g., logs).
+
+---
+
+### Investigation Steps (Socratic style)
+
+| # | Question (instead of a command) | Expected Output Description | Rationale |
+|---|----------------------------------|-----------------------------|-----------|
+| 1 | **What does the error rate and request latency look like for the payment‑gateway service over the last 5 minutes?** | A time‑series showing `rate(http_requests_total{...}[5m])` for 5xx responses > 5 % and a latency histogram or average latency around 620 ms. | Confirms the alert’s symptom, establishes a baseline, and rules out transient spikes. |
+| 2 | **Are any payment‑gateway pods reporting increased restart counts or OOMKilled events?** | `kubectl get pods -n production -l app=payment-gateway` showing `RESTARTS` > 0, or `kubectl describe pod …` revealing `State: Terminated` with reason `OOMKilled`. | Helps determine if container crashes or resource limits are contributing to the error surge. |
+| 3 | **How have CPU and memory usage trended for the payment‑gateway pods and their underlying nodes in the past 10 minutes?** | Metrics (e.g., from Prometheus or Grafana) displaying memory utilization approaching request/limit thresholds, and CPU usage patterns that correlate with the error spike. | Links resource pressure to the observed failures, guiding whether the issue is likely due to exhaustion, throttling, or contention. |
+
+---
+
+**Open question to lead into log analysis:**  
+When you examine the application logs for the payment‑gateway service around the time the error rate began to rise, what patterns or recurring messages do you notice?

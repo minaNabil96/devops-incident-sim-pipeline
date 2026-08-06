@@ -1,0 +1,99 @@
+Here’s a structured **immediate mitigation plan** to verify and address the rate-limiting bypass issue, with rollback steps for each action. The focus is on **low-risk, imperative steps** to contain the surge while preserving system stability.
+
+---
+
+### **HORIZON: Immediate (0–5 minutes)**
+**Strategy**: Verify rate-limiting bypass by inspecting ingress logs and metrics, then temporarily block suspicious IPs at the ingress level.
+
+#### **Commands**:
+```bash
+# Step 1: Check ingress controller logs for rate-limiting headers (e.g., X-RateLimit-Limit)
+kubectl -n production logs -l app.kubernetes.io/name=ingress-nginx --tail=100 | grep -E "rate.limit|429|IP:10\.0\."
+
+# Step 2: Check Prometheus/Grafana for request rates per IP (if metrics are exposed)
+kubectl -n production exec -it prometheus-0 -- curl -s "http://localhost:9090/api/v1/query?query=sum(rate(nginx_ingress_controller_requests_total{status=~\"429|503\"}[5m])) by (client_ip)"
+
+# Step 3: Temporarily block top offending IPs at the ingress (dry-run first)
+kubectl -n production get cm ingress-nginx-whitelist -o yaml > ingress-whitelist-backup.yaml  # Backup
+kubectl -n production create cm ingress-nginx-blocklist --from-literal=blocked-ips="10.0.0.1,10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5" --dry-run=client -o yaml
+kubectl -n production apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-blocklist
+  namespace: production
+data:
+  blocked-ips: "10.0.0.1,10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"
+EOF
+
+# Step 4: Patch the ingress-nginx deployment to use the blocklist (dry-run first)
+kubectl -n production patch deployment ingress-nginx-controller -p '{"spec":{"template":{"spec":{"containers":[{"name":"nginx-ingress-controller","env":[{"name":"BLOCKED_IPS","valueFrom":{"configMapKeyRef":{"name":"ingress-nginx-blocklist","key":"blocked-ips"}}}]}]}}}' --dry-run=client -o yaml
+kubectl -n production patch deployment ingress-nginx-controller -p '{"spec":{"template":{"spec":{"containers":[{"name":"nginx-ingress-controller","env":[{"name":"BLOCKED_IPS","valueFrom":{"configMapKeyRef":{"name":"ingress-nginx-blocklist","key":"blocked-ips"}}}]}]}}}'
+```
+
+#### **Rollback**:
+```bash
+# Revert ingress-nginx to original config
+kubectl -n production delete cm ingress-nginx-blocklist
+kubectl -n production apply -f ingress-whitelist-backup.yaml
+kubectl -n production rollout restart deployment ingress-nginx-controller
+```
+
+---
+
+### **HORIZON: Short-term (5–30 minutes)**
+**Strategy**: Scale Redis horizontally to alleviate memory pressure and adjust PostgreSQL connection pools to prevent exhaustion.
+
+#### **Commands**:
+```bash
+# Step 1: Scale Redis Cluster (if using Redis Cluster) or add replicas (dry-run first)
+kubectl -n production scale statefulset redis --replicas=3 --dry-run=client
+kubectl -n production scale statefulset redis --replicas=3
+
+# Step 2: Increase Redis memory limit (if using a ConfigMap for redis.conf)
+kubectl -n production get cm redis-config -o yaml > redis-config-backup.yaml
+kubectl -n production create cm redis-config --from-literal=maxmemory=16gb --from-literal=maxmemory-policy=allkeys-lru --dry-run=client -o yaml
+kubectl -n production apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: production
+data:
+  maxmemory: "16gb"
+  maxmemory-policy: "allkeys-lru"
+EOF
+kubectl -n production rollout restart statefulset redis
+
+# Step 3: Increase PostgreSQL connection pool (dry-run first)
+kubectl -n production patch deployment postgresql -p '{"spec":{"template":{"spec":{"containers":[{"name":"postgresql","env":[{"name":"MAX_CONNECTIONS","value":"200"}]}]}}}' --dry-run=client -o yaml
+kubectl -n production patch deployment postgresql -p '{"spec":{"template":{"spec":{"containers":[{"name":"postgresql","env":[{"name":"MAX_CONNECTIONS","value":"200"}]}]}}}'
+```
+
+#### **Rollback**:
+```bash
+# Revert Redis scaling
+kubectl -n production scale statefulset redis --replicas=1
+kubectl -n production apply -f redis-config-backup.yaml
+kubectl -n production rollout restart statefulset redis
+
+# Revert PostgreSQL connection pool
+kubectl -n production patch deployment postgresql -p '{"spec":{"template":{"spec":{"containers":[{"name":"postgresql","env":[{"name":"MAX_CONNECTIONS","value":"100"}]}]}}}'
+kubectl -n production rollout restart deployment postgresql
+```
+
+---
+---
+### **HORIZON: Immediate (0–5 minutes) – Alternative (WAF-Based)**
+**Strategy**: Use AWS WAF to block suspicious IPs at the ALB level (if ingress is fronted by ALB).
+
+#### **Commands**:
+```bash
+# Step 1: List current WAF rules (AWS CLI)
+aws wafv2 list-rule-groups --scope REGIONAL --region us-east-1
+
+# Step 2: Create an IP set with offending IPs (dry-run equivalent: validate first)
+aws wafv2 create-ip-set --name BlockSuspiciousIPs --scope REGIONAL --ip-address-version IPV4 --addresses 10.0.0.1/32 10.0.0.2/32 10.0.0.3/32 10.0.0.4/32 10.0.0.5/32 --region us-east-1 --dry-run
+
+# Step 3: Apply the IP set to the ALB's Web ACL
+aws wafv2 associate-web-acl --web-acl-arn <ALB_WEB_ACL_ARN> --resource-arn <ALB_ARN> --region us-east

@@ -1,0 +1,48 @@
+### **Alert Acknowledgment & Primary Goal**
+**Acknowledged**: Critical degradation in `payment-gateway-service` with **42% error rate** (baseline: 0.1%), **P99 latency 8.2s** (baseline: 200ms), and **Redis memory pressure** (15.2GB, high eviction rates).
+**Primary Goal**: *Identify the root cause of the degradation* by systematically isolating the bottleneck (application, database, cache, or infrastructure).
+
+---
+
+---
+
+### **Investigation Steps (Socratic Mode)**
+
+#### **Step 1: Verify Current System Load & Resource Saturation**
+**Question**:
+*What metrics would you check first to confirm whether the issue is driven by resource exhaustion (CPU, memory, I/O) or external dependencies?*
+**Hint**:
+- Think about the **4 golden signals** (latency, traffic, errors, saturation).
+- Focus on the **pod**, **Redis**, and **PostgreSQL** layers.
+
+**Rationale**:
+Resource saturation (e.g., CPU throttling, OOM kills, disk I/O) can directly cause high latency and errors. Redis evictions suggest memory pressure, but we need to confirm if this is the *primary* or *secondary* effect.
+
+---
+
+#### **Step 2: Correlate Errors with Dependency Behavior**
+**Question**:
+*How would you determine if the 503/429 errors are originating from the application, Redis, or PostgreSQL?*
+**Hint**:
+- Check **error logs** for patterns (e.g., timeouts, connection refusals).
+- Look for **dependency-specific metrics** (e.g., Redis `rejected_connections`, PostgreSQL `wait_event_type`).
+
+**Rationale**:
+503s often indicate upstream failures (e.g., Redis/PostgreSQL timeouts), while 429s suggest rate limiting. Distinguishing these helps narrow the scope to a specific layer.
+
+---
+---
+#### **Step 3: Analyze Request Flow & Latency Breakdown**
+**Question**:
+*What tool or command would you use to trace a single slow request (P99 latency) end-to-end, from the pod to Redis/PostgreSQL?*
+**Hint**:
+- Consider **distributed tracing** (e.g., Jaeger, OpenTelemetry) or **per-request logs**.
+- Look for **blocking operations** (e.g., Redis `BLPOP`, PostgreSQL long-running queries).
+
+**Rationale**:
+P99 latency spikes often hide in **synchronous dependencies**. Tracing a single request reveals where time is spent (e.g., Redis blocking calls, N+1 queries).
+
+---
+---
+### **Open Question for Log Analysis**
+*If you observed a sudden spike in Redis `evicted_keys` and PostgreSQL `lock_waits` at the same time the error rate increased, what would be your next investigation step—and why?*
