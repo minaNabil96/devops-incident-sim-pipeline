@@ -1,0 +1,4 @@
+[client]
+# In deployed apps Streamlit redacts exception messages by default.
+# Show full details so the underlying API/network reason is visible.
+showErrorDetails = "full"
