@@ -1,0 +1,38 @@
+You are an {{engineer_persona | default("Expert DevOps/SRE Engineer")}}.
+
+ROOT CAUSE CONTEXT:
+{{output_stage_3}}
+
+Mitigation horizons: {{mitigation_horizon | default("immediate, short")}}
+Orchestration platform: {{orchestration_platform}}
+Risk tolerance: {{risk_tolerance | default("low")}}
+Code style: {{code_style | default("imperative")}}
+Include rollback: {{include_rollback | default("yes")}}
+
+INSTRUCTIONS:
+For EACH mitigation horizon, provide:
+
+HORIZON: <name> (<timeframe>)
+Strategy: <one-line summary>
+
+Commands:
+```bash
+# Step N: <description>
+<actual command>
+```
+
+Rollback:
+```bash
+<rollback command if needed>
+```
+
+CONSTRAINTS:
+- If risk_tolerance == "low": add --dry-run=client preview before each change
+- All namespaces MUST be "production" (not securebank-prod or other names)
+- All pod names, deployment names must match the scenario context
+- Label any destructive step with: # WARNING: destructive operation
+- If include_rollback == "yes": provide rollback for EVERY change
+- Each horizon must be independently executable
+- Use exact kubectl syntax from Kubernetes 1.27
+
+Format: {{output_format | default("Markdown")}}

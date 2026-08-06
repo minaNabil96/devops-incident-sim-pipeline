@@ -1,0 +1,162 @@
+"""
+LLM Client for the Dahl Global API (Kimi-K2.6).
+
+Handles SSE streaming, retry logic, and post-processing sanitization
+(removal of <think> reasoning tags).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from dataclasses import dataclass
+from typing import Optional
+
+import requests
+
+from src.config.settings import APIConfig, _resolve_api_key
+
+
+@dataclass
+class LLMResponse:
+    """Structured response from the LLM API."""
+    content: str
+    tokens_used: int
+    model: str
+    finish_reason: str
+    attempt_count: int
+
+
+class LLMClient:
+    """
+    HTTP client for the Dahl Global API using SSE streaming.
+
+    Implements a three-tier resilience chain:
+    1. Primary request with configurable timeout
+    2. Exponential backoff retry on transient failures
+    3. Graceful DSL parsing on partial responses
+    """
+
+    def __init__(self, config: Optional[APIConfig] = None) -> None:
+        self.config = config or APIConfig()
+
+        api_key = _resolve_api_key()
+        if not api_key:
+            raise ValueError(
+                "DAHL_TOKEN not found. Set via:\n"
+                "  Colab Secrets | .env file | Environment variable"
+            )
+
+        self.headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        max_new_tokens: int = 3000,
+        max_retries: Optional[int] = None,
+    ) -> LLMResponse:
+        """
+        Generate a completion via the Dahl API with SSE streaming.
+
+        Collects incremental token deltas over Server-Sent Events,
+        bypassing Cloudflare 524 timeouts on long generation sequences.
+
+        Post-processes reasoning model leakage (<think>...</think> tags)
+        via regex sanitization.
+        """
+        max_retries = max_retries or self.config.max_retries
+        url = self.config.base_url
+
+        payload = {
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_new_tokens,
+            "temperature": self.config.temperature,
+            "top_p": self.config.top_p,
+            "stream": True,
+        }
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = requests.post(
+                    url,
+                    headers=self.headers,
+                    json=payload,
+                    stream=True,
+                    timeout=self.config.timeout_s,
+                )
+
+                if response.status_code != 200:
+                    self._log_status(attempt, response.status_code)
+                    if attempt < max_retries:
+                        time.sleep(5)
+                    continue
+
+                collected: list[str] = []
+                last_chunk_at = time.time()
+                tokens_received = 0
+
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+
+                    decoded = line.decode("utf-8", errors="replace")
+                    if not decoded.startswith("data: "):
+                        continue
+
+                    raw = decoded[6:]
+
+                    if raw.strip() == "[DONE]":
+                        break
+
+                    try:
+                        chunk = json.loads(raw)
+                        delta = chunk["choices"][0].get("delta", {}).get("content", "")
+                        if delta:
+                            collected.append(delta)
+                            tokens_received += 1
+                            last_chunk_at = time.time()
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
+
+                content = "".join(collected).strip()
+                content = self._strip_reasoning(content)
+
+                # Guard against intentionally empty responses
+                if not content and attempt < max_retries:
+                    self._log_status(attempt, 0, empty=True)
+                    time.sleep(5)
+                    continue
+
+                return LLMResponse(
+                    content=content,
+                    tokens_used=tokens_received,
+                    model=self.config.model,
+                    finish_reason="stop",
+                    attempt_count=attempt,
+                )
+
+            except requests.exceptions.Timeout:
+                self._log_status(attempt, "timeout")
+            except Exception as exc:
+                self._log_status(attempt, f"error:{exc!r}")
+
+            if attempt < max_retries:
+                time.sleep(5)
+
+        raise RuntimeError(
+            f"LLM call failed after {max_retries} attempts"
+        )
+
+    @staticmethod
+    def _strip_reasoning(text: str) -> str:
+        """Remove internal monologue tags from reasoning model outputs."""
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+    def _log_status(self, attempt: int, status: str | int, empty: bool = False) -> None:
+        suffix = " (empty response)" if empty else ""
+        print(f"  ⚠ Attempt {attempt}: API {status}{suffix} — retrying...")

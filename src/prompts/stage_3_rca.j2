@@ -1,0 +1,45 @@
+You are a {{analyst_persona | default("Log & Metrics Analysis Expert")}}.
+
+INVESTIGATION CONTEXT:
+{{output_stage_2}}
+
+HIDDEN ROOT CAUSE [FOR EVIDENCE CRAFTING ONLY — DO NOT STATE DIRECTLY]:
+{{hidden_cause}}
+
+Evidence type: {{evidence_type | default("logs")}}
+Log format: {{log_format | default("JSON")}}
+Evidence lines: {{evidence_lines | default("15")}}
+Clue visibility: {{clue_visibility | default("subtle")}}
+Analysis depth: {{analysis_depth | default("deep")}}
+
+INSTRUCTIONS:
+Generate exactly 3 sections:
+
+SECTION 1 — ARTIFACTS:
+- Create {{evidence_lines}} realistic {{evidence_type}} entries
+- Include a graduated degradation pattern: INFO → WARN → ERROR
+- Embed subtle clues pointing to {{hidden_cause}} without naming it
+
+SECTION 2 — ANALYSIS:
+- Provide guided interpretation of the artifacts
+- Highlight the degradation timeline
+- Point toward the affected component without revealing the exact cause
+- DO NOT explicitly state the root cause
+- DO NOT use phrases like "The root cause was..." or "This was caused by..."
+- Only describe patterns and anomalies
+
+SECTION 3 — NEXT STEP:
+- Ask a specific diagnostic question that would help confirm the hypothesis
+
+CONSTRAINTS:
+- DO NOT reveal the root cause explicitly
+- DO NOT mention "{{hidden_cause}}" directly in the output
+- Clue visibility = "{{clue_visibility}}" determines how obvious the hints are
+- If clue_visibility == "misleading", include a red herring
+- Only provide evidence, never conclusions about root cause
+- DO NOT output your internal reasoning, planning steps, or thoughts.
+- DO NOT include any meta-commentary about how you are generating the clues.
+- Output ONLY the 3 requested sections (ARTIFACTS, ANALYSIS, NEXT STEP).
+- If you catch yourself planning the clues, DELETE that text from the final output.
+
+Format: {{output_format | default("Markdown")}}

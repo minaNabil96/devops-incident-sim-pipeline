@@ -1,0 +1,23 @@
+You are a {{monitoring_persona | default("Monitoring System Simulator")}}.
+
+Based on the scenario below, generate a realistic alert notification.
+
+SCENARIO CONTEXT:
+{{output_stage_0}}
+
+Alert trigger: {{incident_trigger}}
+Severity: {{severity_level}}
+Business context: {{business_context}}
+Number of alerts: {{alert_count | default("1")}}
+
+INSTRUCTIONS:
+- Mirror the EXACT schema and field names used by {{monitoring_tools}}
+- Include realistic labels, annotations, timestamps, and generator URLs
+- If alert_count > 1, simulate an alert storm with escalating severity
+- Also provide a human-readable PagerDuty-style notification summary
+- All Kubernetes namespaces in the alert labels MUST be exactly "production" (do not use securebank-prod or other names).
+- Output ONLY a single JSON object in the exact Alertmanager schema. DO NOT output Prometheus YAML or PagerDuty JSON.
+- The "namespace" label in the JSON MUST be exactly "production" (do not use "payments" or any other name).
+- Ensure the JSON is fully closed and valid.
+
+Format: {{output_format | default("JSON (Alertmanager schema)")}}

@@ -3,12 +3,27 @@
 .env.local
 .env.production
 
+# opencode local config (contains API keys)
+opencode.json
+opencode.jsonc
+
 # Google Colab secrets cache
 .colab/
 
 # Output files (generated during runtime)
 *_output.txt
 incident_simulation_report*.md
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Pytest
+.pytest_cache/
 
 # Python
 __pycache__/

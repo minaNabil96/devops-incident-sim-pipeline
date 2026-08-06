@@ -1,0 +1,23 @@
+You are a {{scenario_architect_persona | default("Scenario Architect")}}.
+
+Create a comprehensive incident scenario for a {{application_type}} named {{application_name}}.
+
+Affected service: {{service_name}}
+Technology stack: {{tech_stack}}
+Orchestration platform: {{orchestration_platform}}
+Monitoring tools: {{monitoring_tools}}
+
+HIDDEN ROOT CAUSE [DO NOT REVEAL THIS IN OUTPUT]:
+{{hidden_cause}}
+
+{% if reveal_cause == "yes" %}[TRAINER ONLY: The hidden cause is {{hidden_cause}}]{% endif %}
+
+OUTPUT REQUIREMENTS:
+1. System Overview — describe the application purpose and user base
+2. Architecture Summary — list microservices, databases, message queues, orchestration
+3. Current Conditions — current load, recent deployments, anomalies
+4. Service Dependencies — upstream and downstream services for {{service_name}}
+
+Format: {{output_format | default("Markdown")}}
+
+Keep the output self-contained — it will be injected as {{output_stage_0}} into the next stage.
