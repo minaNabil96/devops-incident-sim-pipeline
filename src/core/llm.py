@@ -80,6 +80,7 @@ class LLMClient:
             "stream": True,
         }
 
+        failures: list[str] = []
         for attempt in range(1, max_retries + 1):
             try:
                 # Timeout as (connect, read) tuple: generous read timeout keeps
@@ -94,6 +95,7 @@ class LLMClient:
                 )
 
                 if response.status_code != 200:
+                    failures.append(f"HTTP {response.status_code}")
                     self._log_status(attempt, response.status_code)
                     if attempt < max_retries:
                         time.sleep(5)
@@ -132,6 +134,7 @@ class LLMClient:
                 # Guard against intentionally empty responses
                 if not content and attempt < max_retries:
                     self._log_status(attempt, 0, empty=True)
+                    failures.append("empty response")
                     time.sleep(5)
                     continue
 
@@ -145,14 +148,18 @@ class LLMClient:
 
             except requests.exceptions.Timeout:
                 self._log_status(attempt, "timeout")
+                failures.append("timeout")
             except Exception as exc:
                 self._log_status(attempt, f"error:{exc!r}")
+                failures.append(f"error:{exc!r}")
 
             if attempt < max_retries:
                 time.sleep(5)
 
         raise RuntimeError(
-            f"LLM call failed after {max_retries} attempts"
+            f"LLM call failed after {max_retries} attempts "
+            f"(url={url}, model={self.config.model}, key={'set' if _resolve_api_key() else 'MISSING'}): "
+            f"{failures}"
         )
 
     @staticmethod
