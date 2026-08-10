@@ -1,5 +1,6 @@
 """
-LLM Client for the NVIDIA build.nvidia.com API (mistralai/mistral-medium-3.5-128b).
+LLM Client for the Google Gemini API (OpenAI-compatible endpoint,
+default model: gemini-2.5-flash).
 
 Handles SSE streaming, retry logic, and post-processing sanitization
 (removal of <think> reasoning tags).
@@ -44,7 +45,7 @@ class LLMClient:
         api_key = _resolve_api_key()
         if not api_key:
             raise ValueError(
-                "NVIDIA_API_KEY not found. Set via:\n"
+                "GEMINI_API_KEY not found. Set via:\n"
                 "  Colab Secrets | .env file | Environment variable"
             )
 
@@ -60,7 +61,8 @@ class LLMClient:
         max_retries: Optional[int] = None,
     ) -> LLMResponse:
         """
-        Generate a completion via the NVIDIA build API with SSE streaming.
+        Generate a completion via the Google Gemini OpenAI-compatible API
+        with SSE streaming.
 
         Collects incremental token deltas over Server-Sent Events,
         bypassing long-generation timeouts.

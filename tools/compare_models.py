@@ -1,7 +1,7 @@
 """
 Model comparison harness.
 
-Runs the exact thesis SecureBank scenario through a given NVIDIA model,
+Runs the exact thesis SecureBank scenario through a given model,
 saving each stage output + consolidated report into outputs/<model>/.
 
 Usage:

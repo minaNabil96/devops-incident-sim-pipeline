@@ -50,7 +50,7 @@ license: mit
 
 The **DevOps Incident Simulation Pipeline** is a production-grade, multi-agent AI application that simulates the complete SRE incident lifecycle — from alert to blameless post-mortem. The system is orchestrated by **CrewAI**, with 7 specialized agents (Scenario Architect, Monitoring Simulator, SRE Mentor, RCA Analyst, Remediation Engineer, Incident Commander, Post-mortem Writer) each contributing a structured artifact to the incident narrative.
 
-Built on **Jinja2 prompt templating** and the **NVIDIA build API (`mistralai/mistral-medium-3.5-128b`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
+Built on **Jinja2 prompt templating** and the **Google Gemini API (`gemini-2.5-flash`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
 
 The project achieves **100% structural compliance** with the academic paper *"Development of a set of prompt templates for simulation and response to incidents in DevOps"* (Saint Petersburg Electrotechnical University, 2026).
 
@@ -81,7 +81,7 @@ graph TD
 
     subgraph "LLM Backend"
         TPL[Jinja2 Templates<br/>src/prompts/*.j2] --> PIPE
-        LLM[LLMClient<br/>NVIDIA build API · kimi-k2.6] -->|SSE Stream| PIPE
+        LLM[LLMClient<br/>Google Gemini API · gemini-2.5-flash] -->|SSE Stream| PIPE
         PIPE -->|regex <think> strip| CLEAN[Sanitized Output]
     end
 
@@ -200,7 +200,7 @@ crew.kickoff()                        # CrewAI sequential orchestration
 ### Prerequisites
 
 - Python 3.12+
-- A NVIDIA build API key (`NVIDIA_API_KEY`) — get one at [build.nvidia.com](https://build.nvidia.com)
+- A Google Gemini API key (`GEMINI_API_KEY`) — get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 
 ### Local Setup
 
@@ -218,7 +218,7 @@ venv\Scripts\activate           # Windows
 pip install -r requirements.txt
 
 # 4. API key
-cp .env.example .env            # then edit NVIDIA_API_KEY
+cp .env.example .env            # then edit GEMINI_API_KEY
 
 # 5. Run tests (optional)
 pytest tests/ -v
@@ -323,6 +323,7 @@ Space Settings → **Variables and secrets**:
 | Key | Value |
 |-----|-------|
 | `NVIDIA_API_KEY` | your NVIDIA build API key |
+| `GEMINI_API_KEY` | your Google Gemini API key — get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 
 ### Step 4 — Access
 
@@ -361,7 +362,7 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 
 | Problem | Solution |
 |---------|----------|
-| `NVIDIA_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
+| `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
 | long-generation timeout | Already handled — client streams via SSE with 300s timeout |
 | `<think>` tags in output | Already handled — regex sanitizer strips reasoning blocks |
 | Streamlit port in use | `streamlit run app/main.py --server.port=8502` |

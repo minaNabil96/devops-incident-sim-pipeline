@@ -96,7 +96,7 @@ class SREIncidentPipeline:
     ) -> None:
         # Lazy LLM initialization: the client is only constructed when a stage
         # actually runs, so pipeline construction stays testable without a
-        # configured NVIDIA_API_KEY.
+        # configured GEMINI_API_KEY.
         self._llm_client = llm_client
         self._llm: Optional[LLMClient] = None
         self.context: dict[str, str] = {}

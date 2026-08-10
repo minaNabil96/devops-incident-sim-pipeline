@@ -38,7 +38,7 @@ def _detect_environment() -> str:
 
 def _resolve_api_key() -> str:
     """
-    Resolve NVIDIA_API_KEY through three-tier fallback chain:
+    Resolve GEMINI_API_KEY through three-tier fallback chain:
     1. Google Colab Secrets (if in Colab)
     2. .env file (loaded at import time)
     3. Environment variable
@@ -49,14 +49,14 @@ def _resolve_api_key() -> str:
     if env == "colab":
         try:
             from google.colab import userdata
-            key = userdata.get("NVIDIA_API_KEY")
+            key = userdata.get("GEMINI_API_KEY")
             if key:
                 return key
         except Exception:
             pass
 
     # Tier 2: .env file (already loaded by load_dotenv)
-    key = os.getenv("NVIDIA_API_KEY")
+    key = os.getenv("GEMINI_API_KEY")
     if key:
         return key
 
@@ -77,10 +77,13 @@ class APIKeyResolution(BaseModel):
 
 
 class APIConfig(BaseModel):
-    """NVIDIA build.nvidia.com API configuration (OpenAI-compatible)."""
+    """Google Gemini API configuration (OpenAI-compatible endpoint)."""
 
-    base_url: str = "https://integrate.api.nvidia.com/v1/chat/completions"
-    model: str = "mistralai/mistral-medium-3.5-128b"
+    base_url: str = os.getenv(
+        "GEMINI_BASE_URL",
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    )
+    model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     max_tokens: int = 3000
     temperature: float = 0.1
     top_p: float = 0.9
