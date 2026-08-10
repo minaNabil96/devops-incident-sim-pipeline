@@ -219,6 +219,12 @@ class SREIncidentPipeline:
         if resume:
             self.load_disk_context()
 
+        # Seed report metadata from params so the consolidated header
+        # renders the real application name (not "Unknown").
+        self.context["application_name"] = params.get(
+            "application_name", self.context.get("application_name", "Unknown")
+        )
+
         for i in range(len(self.STAGE_NAMES)):
             stage_result = self.run_stage(i, params, resume=resume)
             result.stages.append(stage_result)

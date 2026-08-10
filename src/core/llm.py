@@ -258,8 +258,18 @@ class LLMClient:
         # Unclosed triple-backtick code fence (e.g. remediation bash block).
         if stripped.count("```") % 2 != 0:
             return True
-        # Unbalanced JSON-ish braces (Alert payload / RCA artifact lines).
+        # Unbalanced JSON-ish braces / brackets (Alert payload, RCA artifacts).
         if stripped.count("{") > stripped.count("}"):
+            return True
+        if stripped.count("[") > stripped.count("]"):
+            return True
+        # Unbalanced double quotes on the LAST line, JSON-style: a truncated value
+        # like `"description": "HTTP 5xx error rate for payment-gateway-``.
+        # Only applies when the line looks like JSON (has a `": ` key/value
+        # separator), ignoring escaped quotes to avoid false positives.
+        last_line = stripped.rsplit("\n", 1)[-1]
+        unescaped = last_line.replace('\\"', "")
+        if unescaped.count('"') % 2 != 0 and ('": "' in last_line or '": ' in last_line):
             return True
         # Response ends on a dangling continuation token.
         if stripped.endswith((",", ":", "-", "--", "\\", "|", "| ", ">")):
