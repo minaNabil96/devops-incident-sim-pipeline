@@ -10,6 +10,7 @@ Provides an interactive UI for trainees to:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from datetime import datetime
 from typing import Any
 
 import streamlit as st
+import streamlit.components.v1 as stc
 
 from src.config.settings import SimulationDefaults
 from src.pipeline import (
@@ -211,6 +213,40 @@ def _render_pdf(markdown: str) -> bytes:
     return markdown_to_pdf(markdown)
 
 
+def _copy_button(label: str, text: str) -> None:
+    """Render a copy-to-clipboard button driven by a small embedded JS snippet."""
+    payload = json.dumps(text)  # JS-safe string literal
+    label_js = json.dumps(label)
+    js = (
+        "function _copy(){"
+        "  var ta=document.createElement('textarea');"
+        "  ta.value=" + payload + ";"
+        "  ta.style.position='fixed';ta.style.opacity='0';"
+        "  document.body.appendChild(ta);"
+        "  ta.focus();ta.select();"
+        "  var ok=false;"
+        "  try{ok=document.execCommand('copy');}catch(e){}"
+        "  var btn=document.getElementById('_cbbtn');"
+        "  if(ok){btn.textContent='\u2713 Copied';}"
+        "  else if(navigator.clipboard&&window.isSecureContext){"
+        "    navigator.clipboard.writeText(" + payload + ").then(function(){btn.textContent='\u2713 Copied';});"
+        "  }else{btn.textContent='Copy failed, use the code box below';}"
+        "  document.body.removeChild(ta);"
+        "  setTimeout(function(){btn.textContent=" + label_js + ";},2500);"
+        "}"
+    )
+    stc.html(
+        "<style>"
+        "#_cbbtn{width:100%;height:100%;padding:7px 12px;border:none;border-radius:8px;"
+        "background:#FF4B4B;color:#fff;cursor:pointer;font-family:inherit;font-size:0.9rem;}"
+        "</style>"
+        "<script>" + js + "</script>"
+        "<button id='_cbbtn' onclick='_copy()'>" + label + "</button>",
+        height=56,
+        scrolling=False,
+    )
+
+
 def start_run(params: dict[str, Any]) -> None:
     """Kick off a phase-by-phase simulation run."""
     st.session_state.pipeline = SREIncidentPipeline()
@@ -306,7 +342,7 @@ def render_results() -> None:
         pdf_bytes = _render_pdf(md_text)
 
         with st.expander("Report Export", expanded=True):
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             with c1:
                 st.download_button(
                     "⬇️ Download Report (.md)",
@@ -324,8 +360,10 @@ def render_results() -> None:
                     use_container_width=True,
                     help="Export the consolidated report as a printable PDF.",
                 )
+            with c3:
+                _copy_button("📋 Copy Full Output", md_text)
         with st.expander("Full Markdown Report", expanded=False):
-            st.text(md_text)
+            st.code(md_text, language="markdown", wrap_lines=True)
 
 
 def render_main_content(params: dict[str, Any]) -> None:
