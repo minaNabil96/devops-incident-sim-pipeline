@@ -1,6 +1,6 @@
----
+﻿---
 title: DevOps Incident Simulation Pipeline
-emoji: 🚨
+emoji: ðŸš¨
 colorFrom: gray
 colorTo: red
 sdk: docker
@@ -22,8 +22,8 @@ license: mit
 # DevOps Incident Simulation Pipeline
 
 > **A 7-Agent CrewAI Orchestrated SRE Incident Lifecycle Simulator with Interactive Trainee Frontend**  
-> *Master's Degree Project — Prompt Engineering & AI Service Development*  
-> *Validated against SPbETU (2026) academic paper — 100% structural compliance*
+> *Master's Degree Project â€” Prompt Engineering & AI Service Development*  
+> *Validated against SPbETU (2026) academic paper â€” 100% structural compliance*
 
 ---
 
@@ -48,9 +48,9 @@ license: mit
 
 ## Executive Summary
 
-The **DevOps Incident Simulation Pipeline** is a production-grade, multi-agent AI application that simulates the complete SRE incident lifecycle — from alert to blameless post-mortem. The system is orchestrated by **CrewAI**, with 7 specialized agents (Scenario Architect, Monitoring Simulator, SRE Mentor, RCA Analyst, Remediation Engineer, Incident Commander, Post-mortem Writer) each contributing a structured artifact to the incident narrative.
+The **DevOps Incident Simulation Pipeline** is a production-grade, multi-agent AI application that simulates the complete SRE incident lifecycle â€” from alert to blameless post-mortem. The system is orchestrated by **CrewAI**, with 7 specialized agents (Scenario Architect, Monitoring Simulator, SRE Mentor, RCA Analyst, Remediation Engineer, Incident Commander, Post-mortem Writer) each contributing a structured artifact to the incident narrative.
 
-Built on **Jinja2 prompt templating** and the **Google Gemini API (`gemini-2.5-flash`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
+Built on **Jinja2 prompt templating** and the **Google Gemini API (`gemini-3.6-flash`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
 
 The project achieves **100% structural compliance** with the academic paper *"Development of a set of prompt templates for simulation and response to incidents in DevOps"* (Saint Petersburg Electrotechnical University, 2026).
 
@@ -81,7 +81,7 @@ graph TD
 
     subgraph "LLM Backend"
         TPL[Jinja2 Templates<br/>src/prompts/*.j2] --> PIPE
-        LLM[LLMClient<br/>Google Gemini API · gemini-2.5-flash] -->|SSE Stream| PIPE
+        LLM[LLMClient<br/>Google Gemini API · gemini-3.6-flash] -->|SSE Stream| PIPE
         PIPE -->|regex <think> strip| CLEAN[Sanitized Output]
     end
 
@@ -91,7 +91,7 @@ graph TD
 ### Data Flow Contract
 
 ```
-Stage N output  ──►  context["output_stage_N"]  ──►  injected into Stage N+1 prompt
+Stage N output  â”€â”€â–º  context["output_stage_N"]  â”€â”€â–º  injected into Stage N+1 prompt
 ```
 
 Each stage's prompt is rendered by Jinja2 from:
@@ -107,7 +107,7 @@ Each stage's prompt is rendered by Jinja2 from:
 | 0 | **Scenario Architect** | Build realistic infrastructure context with hidden root cause | `render_prompt_template`, `save_stage_output` |
 | 1 | **Monitoring System Simulator** | Emit Alertmanager v4-compliant JSON, `namespace: production` | + `load_prior_stage_output` |
 | 2 | **Senior SRE Mentor** | Socratic triage: questions, not answers | + `load_prior_stage_output` |
-| 3 | **Log & Metrics Analyst** | Craft graduated-degradation evidence (INFO → WARN → ERROR) | + `load_prior_stage_output` |
+| 3 | **Log & Metrics Analyst** | Craft graduated-degradation evidence (INFO â†’ WARN â†’ ERROR) | + `load_prior_stage_output` |
 | 4 | **Expert DevOps/SRE Engineer** | kubectl commands with `--dry-run=client` + rollback | + `load_prior_stage_output` |
 | 5 | **Incident Commander** | Triple-audience comms (tech/business/exec) | + `load_prior_stage_output` |
 | 6 | **Technical Writer** | Blameless post-mortem with SMART action items | + `load_prior_stage_output` |
@@ -154,10 +154,10 @@ crew.kickoff()                        # CrewAI sequential orchestration
 | Dimension | Implementation |
 |-----------|---------------|
 | **Context Management** | Chain-of-prompts: each stage injects all prior outputs (`output_stage_{0..N-1}`) into the current template scope |
-| **Role Switching** | 7 distinct personas (Architect → Writer), each with domain-specific instructions and constraints |
+| **Role Switching** | 7 distinct personas (Architect â†’ Writer), each with domain-specific instructions and constraints |
 | **Chain of Prompts** | Sequential Jinja2 rendering: `Prompt_N = render(stage_N, params, prior_outputs)` |
 | **Token Budgeting** | Stages 0/3/6 = 3000 tokens; stages 1/2/4/5 = 1500 tokens |
-| **Schema Enforcement** | Constraint repetition (3×) in templates + post-hoc validation tools |
+| **Schema Enforcement** | Constraint repetition (3Ã—) in templates + post-hoc validation tools |
 | **Sanitization** | `re.sub(r'<think>.*?</think>', '', output, flags=re.DOTALL)` |
 
 ---
@@ -166,31 +166,31 @@ crew.kickoff()                        # CrewAI sequential orchestration
 
 ```
 .
-├── src/
-│   ├── config/settings.py        # Pydantic settings, API key resolution
-│   ├── core/
-│   │   ├── llm.py                # SSE streaming LLM client + regex sanitizer
-│   │   └── renderer.py           # Jinja2 template loader/renderer
-│   ├── prompts/                  # 7 .j2 Jinja2 templates
-│   │   ├── stage_0_scenario.j2
-│   │   ├── stage_1_alert.j2
-│   │   ├── stage_2_triage.j2
-│   │   ├── stage_3_rca.j2
-│   │   ├── stage_4_remediation.j2
-│   │   ├── stage_5_communication.j2
-│   │   └── stage_6_postmortem.j2
-│   ├── agents/definitions.py     # 7 CrewAI agent factories + AGENT_REGISTRY
-│   ├── tasks/definitions.py      # 7 CrewAI task factories + TASK_REGISTRY
-│   ├── tools/
-│   │   ├── validators.py         # Alertmanager / kubectl / SMART validators
-│   │   └── template_tools.py     # CrewAI tool wrappers
-│   └── pipeline.py               # Orchestrator: deterministic + CrewAI modes
-├── app/main.py                   # Streamlit trainee frontend
-├── tests/                        # 24 pytest tests (validators, renderer, pipeline)
-├── Dockerfile                    # Multi-stage build for HF Spaces
-├── .dockerignore
-├── requirements.txt
-└── devops_dahl.ipynb             # Original academic notebook (reference)
+â”œâ”€â”€ src/
+â”‚   â”œâ”€â”€ config/settings.py        # Pydantic settings, API key resolution
+â”‚   â”œâ”€â”€ core/
+â”‚   â”‚   â”œâ”€â”€ llm.py                # SSE streaming LLM client + regex sanitizer
+â”‚   â”‚   â””â”€â”€ renderer.py           # Jinja2 template loader/renderer
+â”‚   â”œâ”€â”€ prompts/                  # 7 .j2 Jinja2 templates
+â”‚   â”‚   â”œâ”€â”€ stage_0_scenario.j2
+â”‚   â”‚   â”œâ”€â”€ stage_1_alert.j2
+â”‚   â”‚   â”œâ”€â”€ stage_2_triage.j2
+â”‚   â”‚   â”œâ”€â”€ stage_3_rca.j2
+â”‚   â”‚   â”œâ”€â”€ stage_4_remediation.j2
+â”‚   â”‚   â”œâ”€â”€ stage_5_communication.j2
+â”‚   â”‚   â””â”€â”€ stage_6_postmortem.j2
+â”‚   â”œâ”€â”€ agents/definitions.py     # 7 CrewAI agent factories + AGENT_REGISTRY
+â”‚   â”œâ”€â”€ tasks/definitions.py      # 7 CrewAI task factories + TASK_REGISTRY
+â”‚   â”œâ”€â”€ tools/
+â”‚   â”‚   â”œâ”€â”€ validators.py         # Alertmanager / kubectl / SMART validators
+â”‚   â”‚   â””â”€â”€ template_tools.py     # CrewAI tool wrappers
+â”‚   â””â”€â”€ pipeline.py               # Orchestrator: deterministic + CrewAI modes
+â”œâ”€â”€ app/main.py                   # Streamlit trainee frontend
+â”œâ”€â”€ tests/                        # 24 pytest tests (validators, renderer, pipeline)
+â”œâ”€â”€ Dockerfile                    # Multi-stage build for HF Spaces
+â”œâ”€â”€ .dockerignore
+â”œâ”€â”€ requirements.txt
+â””â”€â”€ devops_dahl.ipynb             # Original academic notebook (reference)
 ```
 
 ---
@@ -200,7 +200,7 @@ crew.kickoff()                        # CrewAI sequential orchestration
 ### Prerequisites
 
 - Python 3.12+
-- A Google Gemini API key (`GEMINI_API_KEY`) — get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- A Google Gemini API key (`GEMINI_API_KEY`) â€” get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
 
 ### Local Setup
 
@@ -246,9 +246,9 @@ The original notebook `devops_dahl.ipynb` remains fully functional:
 
 The interactive trainee UI (`app/main.py`) provides:
 
-1. **Control Panel** — sidebar configuration for all 30+ simulation parameters (application context, hidden cause, severity, engineer level, teaching mode, evidence lines, action items)
-2. **Real-Time Execution Log** — 7-stage progress indicator with live status (`⬜ pending → 🟠 running → 🟢 complete`), per-stage timing and token counts
-3. **Results Dashboard** — KPI metrics (total time, stages, tokens, report size), per-stage tabs, and full report download as Markdown
+1. **Control Panel** â€” sidebar configuration for all 30+ simulation parameters (application context, hidden cause, severity, engineer level, teaching mode, evidence lines, action items)
+2. **Real-Time Execution Log** â€” 7-stage progress indicator with live status (`â¬œ pending â†’ ðŸŸ  running â†’ ðŸŸ¢ complete`), per-stage timing and token counts
+3. **Results Dashboard** â€” KPI metrics (total time, stages, tokens, report size), per-stage tabs, and full report download as Markdown
 
 ```bash
 streamlit run app/main.py
@@ -301,13 +301,13 @@ pytest tests/ -v
 
 ## Deployment (Hugging Face Spaces)
 
-### Step 1 — Create the Space
+### Step 1 â€” Create the Space
 
 1. Go to [huggingface.co/spaces](https://huggingface.co/spaces)
-2. **New Space** → SDK: **Docker** → Hardware: **CPU Basic (Free)**
+2. **New Space** â†’ SDK: **Docker** â†’ Hardware: **CPU Basic (Free)**
 3. Name: `devops-incident-sim-pipeline`
 
-### Step 2 — Push Code
+### Step 2 â€” Push Code
 
 ```bash
 git remote add hf https://huggingface.co/spaces/<your-username>/devops-incident-sim-pipeline
@@ -316,20 +316,20 @@ git push hf master
 
 The `Dockerfile` builds automatically (multi-stage: builder + runtime, ~compact image).
 
-### Step 3 — Configure Secrets
+### Step 3 â€” Configure Secrets
 
-Space Settings → **Variables and secrets**:
+Space Settings â†’ **Variables and secrets**:
 
 | Key | Value |
 |-----|-------|
 | `NVIDIA_API_KEY` | your NVIDIA build API key |
-| `GEMINI_API_KEY` | your Google Gemini API key — get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `GEMINI_API_KEY` | your Google Gemini API key â€” get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 
-### Step 4 — Access
+### Step 4 â€” Access
 
 Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.space`
 
-> **Note:** The Docker image installs CrewAI + Streamlit — first build takes a few minutes on the free tier.
+> **Note:** The Docker image installs CrewAI + Streamlit â€” first build takes a few minutes on the free tier.
 
 ---
 
@@ -339,13 +339,13 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 
 | Criteria | Requirement | Status |
 |----------|-------------|--------|
-| 7-stage incident lifecycle | Complete alert-to-post-mortem chain | ✅ 100% |
-| Schema-valid Alertmanager JSON | Alertmanager v4 spec | ✅ `AlertmanagerValidator` |
-| Namespace consistency | All labels = `production` | ✅ Enforced + validated |
-| Socratic teaching mode | Questions, no direct commands | ✅ Stage 2 template |
-| Blameless post-mortem | No individual names | ✅ Strict mode |
-| SMART action items | Specific/Measurable/Achievable/Relevant/Time-bound | ✅ `SMARTValidator` |
-| Impact duration fidelity | 28 minutes across all sections | ✅ Template constraint |
+| 7-stage incident lifecycle | Complete alert-to-post-mortem chain | âœ… 100% |
+| Schema-valid Alertmanager JSON | Alertmanager v4 spec | âœ… `AlertmanagerValidator` |
+| Namespace consistency | All labels = `production` | âœ… Enforced + validated |
+| Socratic teaching mode | Questions, no direct commands | âœ… Stage 2 template |
+| Blameless post-mortem | No individual names | âœ… Strict mode |
+| SMART action items | Specific/Measurable/Achievable/Relevant/Time-bound | âœ… `SMARTValidator` |
+| Impact duration fidelity | 28 minutes across all sections | âœ… Template constraint |
 
 ### Reference Runtime (original notebook)
 
@@ -363,8 +363,8 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 | Problem | Solution |
 |---------|----------|
 | `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
-| long-generation timeout | Already handled — client streams via SSE with 300s timeout |
-| `<think>` tags in output | Already handled — regex sanitizer strips reasoning blocks |
+| long-generation timeout | Already handled â€” client streams via SSE with 300s timeout |
+| `<think>` tags in output | Already handled â€” regex sanitizer strips reasoning blocks |
 | Streamlit port in use | `streamlit run app/main.py --server.port=8502` |
 | CrewAI slow on free tier | Use deterministic mode (`run_simulation`) for demos |
 | Missing template error | Verify `src/prompts/*.j2` present (run `TemplateRenderer.validate_templates()`) |
@@ -379,5 +379,6 @@ MIT
 
 ## Author
 
-**DevOps/SRE Engineer** — Incident Simulation & Prompt Engineering Pipeline  
-Master's Degree Project — Prompt Engineering and AI Service Development
+**DevOps/SRE Engineer** â€” Incident Simulation & Prompt Engineering Pipeline  
+Master's Degree Project â€” Prompt Engineering and AI Service Development
+

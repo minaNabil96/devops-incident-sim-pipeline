@@ -97,8 +97,9 @@ class LLMClient:
                 )
 
                 if response.status_code != 200:
-                    failures.append(f"HTTP {response.status_code}")
-                    self._log_status(attempt, response.status_code)
+                    body = response.text[:160].replace("\n", " ")
+                    failures.append(f"HTTP {response.status_code}: {body}")
+                    self._log_status(attempt, f"{response.status_code} ({body})")
                     if attempt < max_retries:
                         time.sleep(5)
                     continue

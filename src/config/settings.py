@@ -83,7 +83,7 @@ class APIConfig(BaseModel):
         "GEMINI_BASE_URL",
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     )
-    model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     max_tokens: int = 3000
     temperature: float = 0.1
     top_p: float = 0.9
