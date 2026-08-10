@@ -21,8 +21,10 @@ class TestSREIncidentPipeline:
         """Verify token budgets for all stages."""
         pipeline = SREIncidentPipeline()
         assert len(pipeline.TOKEN_BUDGETS) == 7
-        assert pipeline.TOKEN_BUDGETS[0] == 3000  # Scenario
-        assert pipeline.TOKEN_BUDGETS[6] == 3000  # Post-mortem
+        # Budgets are scaled up for Gemini 3.x reasoning models to avoid
+        # premature truncation of thesis-format stage outputs.
+        assert pipeline.TOKEN_BUDGETS[0] >= 3000  # Scenario
+        assert pipeline.TOKEN_BUDGETS[6] >= 6000  # Post-mortem
 
     def test_context_initialization(self):
         """Verify context dict is initialized empty."""

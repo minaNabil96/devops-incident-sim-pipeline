@@ -78,15 +78,16 @@ class SREIncidentPipeline:
         "stage_6_postmortem",
     ]
 
-    # Token budgets per stage (from original notebook)
+    # Token budgets per stage (from original notebook, scaled up for Gemini 3.x
+    # reasoning models, which consume output budget on internal thinking).
     TOKEN_BUDGETS = {
-        0: 3000,  # Scenario — needs detail
-        1: 1500,  # Alert — JSON only
-        2: 1500,  # Triage — concise guide
-        3: 3000,  # RCA — evidence artifacts
-        4: 1500,  # Remediation — commands only
-        5: 1500,  # Communication — 3 short messages
-        6: 3000,  # Post-mortem — comprehensive
+        0: 6000,  # Scenario — needs detail
+        1: 4000,  # Alert — full valid Alertmanager v4 JSON
+        2: 4000,  # Triage — Socratic questions + steps
+        3: 6000,  # RCA — evidence artifacts + analysis
+        4: 4000,  # Remediation — commands + rollback
+        5: 4000,  # Communication — full status updates
+        6: 8000,  # Post-mortem — comprehensive blameless sections
     }
 
     def __init__(
