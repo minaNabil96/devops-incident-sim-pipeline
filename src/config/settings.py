@@ -89,6 +89,10 @@ class APIConfig(BaseModel):
     top_p: float = 0.9
     max_retries: int = 3
     timeout_s: int = 300
+    # Optional override for thinking budget. When None, the LLM client
+    # auto-selects "low" for Gemini 3.x reasoning models to keep content
+    # within max_tokens. Set GEMINI_REASONING_EFFORT to force a value.
+    reasoning_effort: Optional[str] = os.getenv("GEMINI_REASONING_EFFORT") or None
 
     key_resolution: APIKeyResolution = APIKeyResolution()
 
