@@ -36,9 +36,9 @@ def _detect_environment() -> str:
     return "local"
 
 
-def _resolve_api_key() -> str:
+def _resolve_env_key(name: str) -> str:
     """
-    Resolve GEMINI_API_KEY through three-tier fallback chain:
+    Resolve an API key through a three-tier fallback chain:
     1. Google Colab Secrets (if in Colab)
     2. .env file (loaded at import time)
     3. Environment variable
@@ -49,19 +49,24 @@ def _resolve_api_key() -> str:
     if env == "colab":
         try:
             from google.colab import userdata
-            key = userdata.get("GEMINI_API_KEY")
+            key = userdata.get(name)
             if key:
                 return key
         except Exception:
             pass
 
-    # Tier 2: .env file (already loaded by load_dotenv)
-    key = os.getenv("GEMINI_API_KEY")
-    if key:
-        return key
+    # Tier 2: .env file (already loaded by load_dotenv) / Tier 3: env var
+    return os.getenv(name) or ""
 
-    # Tier 3: Explicit env var (documented fallback)
-    return ""  # Triggers ValueError at LLMClient init
+
+def _resolve_api_key() -> str:
+    """Resolve the primary provider key (GEMINI_API_KEY)."""
+    return _resolve_env_key("GEMINI_API_KEY")
+
+
+def _resolve_fallback_api_key() -> str:
+    """Resolve the OrcaRouter fallback key (ORCAROUTER_API_KEY). Optional."""
+    return _resolve_env_key("ORCAROUTER_API_KEY")
 
 
 class APIKeyResolution(BaseModel):
@@ -93,6 +98,22 @@ class APIConfig(BaseModel):
     # auto-selects "low" for Gemini 3.x reasoning models to keep content
     # within max_tokens. Set GEMINI_REASONING_EFFORT to force a value.
     reasoning_effort: Optional[str] = os.getenv("GEMINI_REASONING_EFFORT") or None
+
+    # --- OrcaRouter fallback (used when Gemini is quota-exhausted or down) ---
+    # OrcaRouter is an OpenAI-compatible gateway. The fallback activates only
+    # when ORCAROUTER_API_KEY is present; otherwise behavior is Gemini-only.
+    fallback_base_url: str = os.getenv(
+        "ORCAROUTER_BASE_URL",
+        "https://api.orcarouter.ai/v1/chat/completions",
+    )
+    fallback_model: str = os.getenv(
+        "ORCAROUTER_MODEL", "deepseek/deepseek-v4-flash-free"
+    )
+    enable_fallback: bool = os.getenv("ENABLE_LLM_FALLBACK", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
     key_resolution: APIKeyResolution = APIKeyResolution()
 

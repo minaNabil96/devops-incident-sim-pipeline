@@ -201,6 +201,7 @@ crew.kickoff()                        # CrewAI sequential orchestration
 
 - Python 3.12+
 - A Google Gemini API key (`GEMINI_API_KEY`) â€” get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- *(Optional)* An OrcaRouter key (`ORCAROUTER_API_KEY`) for automatic fallback when the Gemini free-tier daily quota is exhausted â€” get one at [orcarouter.ai](https://www.orcarouter.ai)
 
 ### Local Setup
 
@@ -363,6 +364,7 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 | Problem | Solution |
 |---------|----------|
 | `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
+| Gemini daily free-tier quota exhausted | Set `ORCAROUTER_API_KEY` â€” the client auto-falls back to OrcaRouter (`deepseek/deepseek-v4-flash-free`) |
 | long-generation timeout | Already handled â€” client streams via SSE with 300s timeout |
 | `<think>` tags in output | Already handled â€” regex sanitizer strips reasoning blocks |
 | Streamlit port in use | `streamlit run app/main.py --server.port=8502` |

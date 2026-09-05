@@ -52,8 +52,24 @@ def _build_client(max_retries=2):
         model="gemini-3.7-flash",
         max_retries=max_retries,
         timeout_s=5,
+        enable_fallback=False,
     )
     return LLMClient(cfg)
+
+
+def _build_fallback_client(max_retries=2):
+    """Client with the OrcaRouter fallback provider enabled."""
+    cfg = APIConfig(
+        base_url="http://primary",
+        model="gemini-3.7-flash",
+        fallback_base_url="http://fallback",
+        fallback_model="deepseek/deepseek-v4-flash-free",
+        enable_fallback=True,
+        max_retries=max_retries,
+        timeout_s=5,
+    )
+    with patch("src.core.llm._resolve_fallback_api_key", return_value="sk-orca-test"):
+        return LLMClient(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +368,120 @@ def test_incomplete_content_continues_even_on_stop():
 
 
 # ---------------------------------------------------------------------------
+# Test 16: primary quota-exhausted -> OrcaRouter fallback serves the response
+# ---------------------------------------------------------------------------
+def test_fallback_on_primary_quota():
+    urls = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        urls.append(url)
+        if url == "http://primary":
+            return _err_resp(
+                429,
+                body='{"error":{"code":429,"message":"You exceeded your current quota"}}',
+            )
+        return _make_stream_resp(_sse(["Fallback answer"], finish="stop"))
+
+    c = _build_fallback_client()
+    with patch.object(requests, "post", side_effect=mock):
+        r = c.generate("test", max_new_tokens=100)
+
+    assert r.content == "Fallback answer"
+    assert r.model == "deepseek/deepseek-v4-flash-free"
+    assert "http://primary" in urls
+    assert "http://fallback" in urls
+    print("[OK] test_fallback_on_primary_quota")
+
+
+# ---------------------------------------------------------------------------
+# Test 17: primary exhausts retries (5xx) -> fallback serves the response
+# ---------------------------------------------------------------------------
+def test_fallback_on_primary_persistent_5xx():
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        if url == "http://primary":
+            return _err_resp(503, body='{"error":{"message":"unavailable"}}')
+        return _make_stream_resp(_sse(["Recovered via fallback"], finish="stop"))
+
+    c = _build_fallback_client(max_retries=2)
+    with patch.object(requests, "post", side_effect=mock), \
+         patch("src.core.llm.time.sleep"):
+        r = c.generate("test", max_new_tokens=100)
+
+    assert r.content == "Recovered via fallback"
+    assert r.model == "deepseek/deepseek-v4-flash-free"
+    print("[OK] test_fallback_on_primary_persistent_5xx")
+
+
+# ---------------------------------------------------------------------------
+# Test 18: fallback provider never carries the Gemini reasoning_effort field
+# ---------------------------------------------------------------------------
+def test_fallback_payload_has_no_reasoning_effort():
+    payloads = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        payloads.append((url, json))
+        if url == "http://primary":
+            return _err_resp(
+                429,
+                body='{"error":{"code":429,"message":"You exceeded your current quota"}}',
+            )
+        return _make_stream_resp(_sse(["ok"], finish="stop"))
+
+    c = _build_fallback_client()
+    with patch.object(requests, "post", side_effect=mock):
+        c.generate("test", max_new_tokens=100)
+
+    fallback_payloads = [p for (u, p) in payloads if u == "http://fallback"]
+    assert fallback_payloads, "fallback was never called"
+    assert all("reasoning_effort" not in p for p in fallback_payloads)
+    print("[OK] test_fallback_payload_has_no_reasoning_effort")
+
+
+# ---------------------------------------------------------------------------
+# Test 19: fallback disabled (no key) -> quota error propagates, no 2nd provider
+# ---------------------------------------------------------------------------
+def test_no_fallback_when_disabled():
+    urls = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        urls.append(url)
+        return _err_resp(
+            429,
+            body='{"error":{"code":429,"message":"You exceeded your current quota"}}',
+        )
+
+    c = _build_client(max_retries=3)  # fallback disabled
+    with patch.object(requests, "post", side_effect=mock):
+        try:
+            c.generate("test", max_new_tokens=100)
+        except QuotaExhaustedError:
+            assert all(u == "http://x" for u in urls)
+            print("[OK] test_no_fallback_when_disabled")
+            return
+    raise AssertionError("expected QuotaExhaustedError")
+
+
+# ---------------------------------------------------------------------------
+# Test 20: primary succeeds -> fallback provider is never contacted
+# ---------------------------------------------------------------------------
+def test_primary_success_skips_fallback():
+    urls = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        urls.append(url)
+        return _make_stream_resp(_sse(["Primary answer"], finish="stop"))
+
+    c = _build_fallback_client()
+    with patch.object(requests, "post", side_effect=mock):
+        r = c.generate("test", max_new_tokens=100)
+
+    assert r.content == "Primary answer"
+    assert r.model == "gemini-3.7-flash"
+    assert "http://fallback" not in urls
+    print("[OK] test_primary_success_skips_fallback")
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_complete_response()
     test_truncation_continues()
@@ -368,4 +498,9 @@ if __name__ == "__main__":
     test_strip_preamble_outline()
     test_strip_preamble_keeps_legit_intro()
     test_incomplete_content_continues_even_on_stop()
-    print("\n=== ALL 15 TESTS PASSED ===")
+    test_fallback_on_primary_quota()
+    test_fallback_on_primary_persistent_5xx()
+    test_fallback_payload_has_no_reasoning_effort()
+    test_no_fallback_when_disabled()
+    test_primary_success_skips_fallback()
+    print("\n=== ALL 20 TESTS PASSED ===")

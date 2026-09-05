@@ -9,6 +9,10 @@ Implements:
     TransientAPIError) so callers can react appropriately
   - Exponential backoff with Retry-After header support for transients
   - Auto-continuation of truncated responses so stages are never partial
+  - Provider fallback: when the primary Gemini endpoint is quota-exhausted
+    or persistently failing, transparently retry against the OrcaRouter
+    gateway (default fallback model: deepseek/deepseek-v4-flash-free).
+    Enabled only when ORCAROUTER_API_KEY is configured.
 """
 
 from __future__ import annotations
@@ -23,7 +27,11 @@ from typing import Optional
 
 import requests
 
-from src.config.settings import APIConfig, _resolve_api_key
+from src.config.settings import (
+    APIConfig,
+    _resolve_api_key,
+    _resolve_fallback_api_key,
+)
 
 
 class QuotaExhaustedError(RuntimeError):
@@ -52,6 +60,16 @@ class LLMResponse:
     attempt_count: int
 
 
+@dataclass
+class _Provider:
+    """A single upstream endpoint (primary Gemini or fallback OrcaRouter)."""
+    name: str
+    base_url: str
+    model: str
+    headers: dict
+    is_reasoning_model: bool
+
+
 _QUOTA_MARKERS = (
     "you exceeded your current quota",
     "resource_exhausted",
@@ -64,12 +82,14 @@ class LLMClient:
     """
     HTTP client for the Google Gemini OpenAI-compatible API using SSE streaming.
 
-    Implements a five-tier resilience chain:
+    Implements a resilience chain:
     1. Primary request with configurable timeout
     2. Live finish_reason detection (does not assume "stop")
     3. Auto-continuation of truncated responses so stages are never saved partial
     4. Exponential backoff with Retry-After honor for transient 429/5xx
-    5. Fail-fast on quota exhaustion and configuration errors (no waste)
+    5. Fail-fast (within a provider) on quota exhaustion and config errors
+    6. Provider fallback: on quota exhaustion or exhausted retries against the
+       primary (Gemini), switch to the OrcaRouter gateway if configured.
     """
 
     MAX_CONTINUATIONS = 4
@@ -86,25 +106,53 @@ class LLMClient:
                 "  Colab Secrets | .env file | Environment variable"
             )
 
+        # Primary provider: Google Gemini (OpenAI-compatible endpoint).
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        self._providers = [
+            _Provider(
+                name="gemini",
+                base_url=self.config.base_url,
+                model=self.config.model,
+                headers=self.headers,
+                is_reasoning_model=self.config.model.startswith("gemini-3"),
+            )
+        ]
 
-    def _base_payload(self, max_new_tokens: int) -> dict:
+        # Fallback provider: OrcaRouter (only if configured + a key exists).
+        fallback_key = _resolve_fallback_api_key()
+        if self.config.enable_fallback and fallback_key:
+            self._providers.append(
+                _Provider(
+                    name="orcarouter",
+                    base_url=self.config.fallback_base_url,
+                    model=self.config.fallback_model,
+                    headers={
+                        "Authorization": f"Bearer {fallback_key}",
+                        "Content-Type": "application/json",
+                    },
+                    # DeepSeek is a reasoning model but OrcaRouter does not
+                    # accept Gemini's reasoning_effort field, so leave it off.
+                    is_reasoning_model=False,
+                )
+            )
+
+    def _base_payload(self, provider: _Provider, max_new_tokens: int) -> dict:
         payload = {
-            "model": self.config.model,
+            "model": provider.model,
             "max_tokens": max_new_tokens,
             "temperature": self.config.temperature,
             "top_p": self.config.top_p,
             "stream": True,
         }
-        effort = self._reasoning_effort()
+        effort = self._reasoning_effort(provider)
         if effort:
             payload["reasoning_effort"] = effort
         return payload
 
-    def _reasoning_effort(self) -> Optional[str]:
+    def _reasoning_effort(self, provider: _Provider) -> Optional[str]:
         """Best-effort thinking reduction for Gemini 3.x reasoning models.
 
         Lowering reasoning effort frees output budget for actual content,
@@ -112,18 +160,21 @@ class LLMClient:
         ``reasoning_effort`` field is documented as supported on the
         Gemini OpenAI-compat endpoint; if the deployed model rejects it
         with HTTP 400, ``_post_stream`` retries the request without it.
+        Only applied to the primary Gemini provider.
         """
+        if provider.name != "gemini":
+            return None
         if self.config.reasoning_effort is not None:
             return self.config.reasoning_effort or None
-        if self.config.model.startswith("gemini-3"):
+        if provider.is_reasoning_model:
             return "low"
         return None
 
-    def _post_stream(self, payload: dict):
+    def _post_stream(self, provider: _Provider, payload: dict):
         """POST + classify. Returns (content, finish_reason, saw_done, tokens)."""
         response = requests.post(
-            self.config.base_url,
-            headers=self.headers,
+            provider.base_url,
+            headers=provider.headers,
             json=payload,
             stream=True,
             timeout=(30, self.config.timeout_s),
@@ -139,8 +190,8 @@ class LLMClient:
             clean = {k: v for k, v in payload.items() if k != "reasoning_effort"}
             self._log_status(-1, "400 retrying without reasoning_effort")
             response = requests.post(
-                self.config.base_url,
-                headers=self.headers,
+                provider.base_url,
+                headers=provider.headers,
                 json=clean,
                 stream=True,
                 timeout=(30, self.config.timeout_s),
@@ -152,7 +203,7 @@ class LLMClient:
         if response.status_code == 429:
             if any(marker in body.lower() for marker in _QUOTA_MARKERS):
                 raise QuotaExhaustedError(
-                    f"Daily / spend quota exhausted for {self.config.model}. "
+                    f"Daily / spend quota exhausted for {provider.model}. "
                     f"The free-tier allowance is used up; wait for the daily "
                     f"quota to reset or upgrade the plan. Server said: {body}"
                 )
@@ -335,15 +386,45 @@ class LLMClient:
         via regex sanitization.
         """
         max_retries = max_retries or self.config.max_retries
-        url = self.config.base_url
+        last_error: Optional[Exception] = None
+
+        for index, provider in enumerate(self._providers):
+            is_last = index == len(self._providers) - 1
+            try:
+                return self._generate_with_provider(
+                    provider, prompt, max_new_tokens, max_retries
+                )
+            except (QuotaExhaustedError, LLMConfigError, RuntimeError) as exc:
+                last_error = exc
+                if is_last:
+                    raise
+                self._log_status(
+                    -1,
+                    f"{provider.name} failed ({type(exc).__name__}); "
+                    f"falling back to {self._providers[index + 1].name}",
+                )
+
+        # Only reached if the provider list was empty (never in practice).
+        raise RuntimeError(f"No LLM providers available: {last_error}")
+
+    def _generate_with_provider(
+        self,
+        provider: _Provider,
+        prompt: str,
+        max_new_tokens: int,
+        max_retries: int,
+    ) -> LLMResponse:
+        """Run the full retry + continuation loop against one provider."""
         failures: list[str] = []
 
         for attempt in range(1, max_retries + 1):
             try:
-                payload = self._base_payload(max_new_tokens)
+                payload = self._base_payload(provider, max_new_tokens)
                 payload["messages"] = [{"role": "user", "content": prompt}]
 
-                content, finish_reason, saw_done, tokens_received = self._post_stream(payload)
+                content, finish_reason, saw_done, tokens_received = self._post_stream(
+                    provider, payload
+                )
                 content = self._strip_reasoning(content).strip()
 
                 # Continuation loop: recover from token-cap / dropped-stream
@@ -370,10 +451,12 @@ class LLMClient:
                             ),
                         },
                     ]
-                    cont_payload = self._base_payload(max_new_tokens)
+                    cont_payload = self._base_payload(provider, max_new_tokens)
                     cont_payload["messages"] = messages
 
-                    cont_content, finish_reason, saw_done, cont_tokens = self._post_stream(cont_payload)
+                    cont_content, finish_reason, saw_done, cont_tokens = self._post_stream(
+                        provider, cont_payload
+                    )
                     cont_content = self._strip_reasoning(cont_content).strip()
                     if not cont_content:
                         break
@@ -392,7 +475,7 @@ class LLMClient:
                 return LLMResponse(
                     content=self._strip_preamble(content),
                     tokens_used=tokens_received,
-                    model=self.config.model,
+                    model=provider.model,
                     finish_reason=finish_reason or "stop",
                     attempt_count=attempt,
                 )
@@ -418,9 +501,8 @@ class LLMClient:
 
         raise RuntimeError(
             f"LLM call failed after {max_retries} attempts "
-            f"(url={url}, model={self.config.model}, "
-            f"key={'set' if _resolve_api_key() else 'MISSING'}): "
-            f"{failures}"
+            f"(provider={provider.name}, url={provider.base_url}, "
+            f"model={provider.model}): {failures}"
         )
 
     @staticmethod
