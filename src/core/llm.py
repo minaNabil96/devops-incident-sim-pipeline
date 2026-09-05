@@ -1,6 +1,6 @@
 """
 LLM Client for the Google Gemini API (OpenAI-compatible endpoint,
-default model: gemini-3.6-flash).
+default model: gemini-3.7-flash).
 
 Implements:
   - SSE streaming with live finish_reason capture

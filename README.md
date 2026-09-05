@@ -50,7 +50,7 @@ license: mit
 
 The **DevOps Incident Simulation Pipeline** is a production-grade, multi-agent AI application that simulates the complete SRE incident lifecycle â€” from alert to blameless post-mortem. The system is orchestrated by **CrewAI**, with 7 specialized agents (Scenario Architect, Monitoring Simulator, SRE Mentor, RCA Analyst, Remediation Engineer, Incident Commander, Post-mortem Writer) each contributing a structured artifact to the incident narrative.
 
-Built on **Jinja2 prompt templating** and the **Google Gemini API (`gemini-3.6-flash`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
+Built on **Jinja2 prompt templating** and the **Google Gemini API (`gemini-3.7-flash`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
 
 The project achieves **100% structural compliance** with the academic paper *"Development of a set of prompt templates for simulation and response to incidents in DevOps"* (Saint Petersburg Electrotechnical University, 2026).
 
@@ -81,7 +81,7 @@ graph TD
 
     subgraph "LLM Backend"
         TPL[Jinja2 Templates<br/>src/prompts/*.j2] --> PIPE
-        LLM[LLMClient<br/>Google Gemini API · gemini-3.6-flash] -->|SSE Stream| PIPE
+        LLM[LLMClient<br/>Google Gemini API · gemini-3.7-flash] -->|SSE Stream| PIPE
         PIPE -->|regex <think> strip| CLEAN[Sanitized Output]
     end
 

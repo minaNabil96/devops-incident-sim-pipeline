@@ -49,7 +49,7 @@ def _err_resp(status_code, body='{"error":{"message":"err"}}', headers=None):
 def _build_client(max_retries=2):
     cfg = APIConfig(
         base_url="http://x",
-        model="gemini-3.6-flash",
+        model="gemini-3.7-flash",
         max_retries=max_retries,
         timeout_s=5,
     )
