@@ -124,7 +124,7 @@ def render_sidebar() -> dict[str, Any]:
         "<div style='font-size:0.85rem;color:#9E9E9E;line-height:1.5;'>"
         "👤 <b>Ханна М. Н.</b><br>"
         "🎓 СПбГЭТУ «ЛЭТИ» (SPbETU)<br>"
-        "<span style='font-size:0.78rem;'>Выпускная квалификационная работа · 2026</span>"
+        "<span style='font-size:0.78rem;'>Производственная практика · 2026</span>"
         "</div>",
         unsafe_allow_html=True,
     )
