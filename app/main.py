@@ -119,6 +119,16 @@ def render_sidebar() -> dict[str, Any]:
             "Blameless Mode", ["strict", "moderate"], index=0
         )
 
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(
+        "<div style='font-size:0.85rem;color:#9E9E9E;line-height:1.5;'>"
+        "👤 <b>Ханна М. Н.</b><br>"
+        "🎓 СПбГЭТУ «ЛЭТИ» (SPbETU)<br>"
+        "<span style='font-size:0.78rem;'>Выпускная квалификационная работа · 2026</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
     return {
         **d.model_dump(),
         **{
@@ -369,7 +379,10 @@ def render_results() -> None:
 def render_main_content(params: dict[str, Any]) -> None:
     """Render the main content area (phase-by-stage streaming runner)."""
     st.title("🚨 DevOps Incident Simulation Pipeline")
-    st.caption("**7-Stage Multi-Agent System** | Academic Compliance: SPbETU 2026")
+    st.caption(
+        "**7-Stage Multi-Agent System** | Academic Compliance: SPbETU 2026 (ЛЭТИ)  \n"
+        "Автор: **Ханна М. Н.** · СПбГЭТУ «ЛЭТИ»"
+    )
 
     render_stage_progress()
 
