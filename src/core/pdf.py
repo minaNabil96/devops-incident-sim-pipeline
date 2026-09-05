@@ -119,6 +119,35 @@ def _parse_table(lines: list[str]) -> list[list[str]]:
     return rows
 
 
+def _break_long_tokens(text: str, max_char_w: float, get_w) -> str:
+    """
+    Insert zero-width-ish break points into tokens that are wider than the
+    column, so ``multi_cell`` can wrap them instead of raising when a single
+    unbreakable token (e.g. a long URL or command) exceeds the cell width.
+    """
+    if not text or max_char_w <= 0:
+        return text
+    out_words: list[str] = []
+    for word in text.split(" "):
+        if get_w(word) <= max_char_w:
+            out_words.append(word)
+            continue
+        # Hard-chunk the oversized token to fit the column width.
+        chunk = ""
+        pieces: list[str] = []
+        for ch in word:
+            if get_w(chunk + ch) > max_char_w and chunk:
+                pieces.append(chunk)
+                chunk = ch
+            else:
+                chunk += ch
+        if chunk:
+            pieces.append(chunk)
+        # Join with a space so multi_cell has explicit break opportunities.
+        out_words.append(" ".join(pieces))
+    return " ".join(out_words)
+
+
 def _render_table(pdf: FPDF, rows: list[list[str]]) -> None:
     """Render a simple grid table with proportional column widths."""
     avail = pdf.w - _MARGIN_L - _MARGIN_R
@@ -126,36 +155,65 @@ def _render_table(pdf: FPDF, rows: list[list[str]]) -> None:
     if ncols == 0:
         return
 
-    # estimate column widths by longest word / content width
+    pad = 1.5
+    line_h = 5.0
+
+    # A cell must be wide enough to render at least the widest single glyph
+    # plus padding, otherwise fpdf2 raises "Not enough horizontal space".
     pdf.set_font("DejaVu", "", 9)
+    min_content_w = max(pdf.get_string_width("W"), pdf.get_string_width("m"), 2.0)
+    min_col_w = min_content_w + 2 * pad + 0.5
+
+    # If even the minimum columns don't fit, we cannot render a grid; bail out
+    # to a plain-text rendering of the rows instead of crashing.
+    if min_col_w * ncols > avail:
+        _render_table_as_text(pdf, rows)
+        return
+
+    # estimate column widths by content width, then clamp + scale so every
+    # column keeps at least min_col_w and the total never exceeds avail.
     widths: list[float] = []
     for c in range(ncols):
         w = max(pdf.get_string_width(r[c]) if c < len(r) else 0 for r in rows)
-        widths.append(max(w + 6, 14))
+        widths.append(max(w + 6, min_col_w))
+
     total = sum(widths)
     if total > avail:
-        scale = avail / total
-        widths = [w * scale for w in widths]
-
-    pad = 1.5
-    line_h = 5.0
+        # Scale down only the slack above the per-column minimum so no column
+        # collapses below min_col_w.
+        floor = min_col_w * ncols
+        slack = total - floor
+        target_slack = avail - floor
+        if slack > 0:
+            ratio = max(0.0, target_slack / slack)
+            widths = [min_col_w + (w - min_col_w) * ratio for w in widths]
+        else:
+            widths = [avail / ncols] * ncols
 
     def draw_row(row: list[str], header: bool) -> None:
         x0 = pdf.get_x()
         y0 = pdf.get_y()
+        pdf.set_font("DejaVu", "B" if header else "", 9)
+
+        # Pre-wrap oversized tokens so multi_cell can always break the text.
+        cells: list[str] = []
+        for c in range(ncols):
+            content_w = max(widths[c] - 2 * pad, min_content_w)
+            txt = row[c] if c < len(row) else ""
+            cells.append(_break_long_tokens(txt, content_w, pdf.get_string_width))
+
         # compute wrapped heights
         cell_heights: list[float] = []
         for c in range(ncols):
-            pdf.set_font("DejaVu", "B" if header else "", 9)
-            txt = row[c] if c < len(row) else ""
-            # estimate lines needed
-            w = max(widths[c] - 2 * pad, 1)
-            n_lines = max(1, int(pdf.get_string_width(txt) / w) + 1)
+            content_w = max(widths[c] - 2 * pad, min_content_w)
+            n_lines = max(1, int(pdf.get_string_width(cells[c]) / content_w) + 1)
             cell_heights.append(n_lines * line_h + 2)
         row_h = max(cell_heights)
 
         if y0 + row_h > pdf.h - _MARGIN_B - 10:
             pdf.add_page()
+            x0 = pdf.get_x()
+            y0 = pdf.get_y()
 
         if header:
             pdf.set_fill_color(*_TABLE_HDR_BG)
@@ -165,8 +223,7 @@ def _render_table(pdf: FPDF, rows: list[list[str]]) -> None:
             x = x0 + sum(widths[:c])
             pdf.set_xy(x + pad, y0 + pad)
             pdf.set_font("DejaVu", "B" if header else "", 9)
-            txt = row[c] if c < len(row) else ""
-            pdf.multi_cell(widths[c] - 2 * pad, line_h, txt, align="L")
+            pdf.multi_cell(max(widths[c] - 2 * pad, min_content_w), line_h, cells[c], align="L")
         pdf.set_xy(x0, y0 + row_h)
 
         # borders
@@ -178,6 +235,20 @@ def _render_table(pdf: FPDF, rows: list[list[str]]) -> None:
 
     for i, row in enumerate(rows):
         draw_row(row, header=(i == 0))
+    pdf.ln(2)
+
+
+def _render_table_as_text(pdf: FPDF, rows: list[list[str]]) -> None:
+    """Fallback rendering when a grid table cannot fit the page width."""
+    header = rows[0] if rows else []
+    for row in rows[1:] if header else rows:
+        pdf.set_x(_MARGIN_L)
+        parts = []
+        for c, cell in enumerate(row):
+            label = header[c] if c < len(header) else ""
+            parts.append(f"**{label}:** {cell}" if label else cell)
+        _write_inline(pdf, "  |  ".join(parts), size=9)
+        pdf.ln(5.2)
     pdf.ln(2)
 
 

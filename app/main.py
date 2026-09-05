@@ -216,11 +216,19 @@ def _elapsed() -> str:
 
 
 @st.cache_data(show_spinner=False)
-def _render_pdf(markdown: str) -> bytes:
-    """Render the consolidated report to PDF bytes (cached by content)."""
-    from src.core.pdf import markdown_to_pdf
+def _render_pdf(markdown: str) -> bytes | None:
+    """
+    Render the consolidated report to PDF bytes (cached by content).
 
-    return markdown_to_pdf(markdown)
+    Returns None if PDF generation fails, so a rendering edge case never
+    takes down the whole results page — the Markdown download stays available.
+    """
+    try:
+        from src.core.pdf import markdown_to_pdf
+
+        return markdown_to_pdf(markdown)
+    except Exception:  # noqa: BLE001 - PDF is best-effort, MD is the source of truth
+        return None
 
 
 def _copy_button(label: str, text: str) -> None:
@@ -362,14 +370,22 @@ def render_results() -> None:
                     use_container_width=True,
                 )
             with c2:
-                st.download_button(
-                    "⬇️ Download Report (.pdf)",
-                    pdf_bytes,
-                    file_name="incident_simulation_report.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                    help="Export the consolidated report as a printable PDF.",
-                )
+                if pdf_bytes is not None:
+                    st.download_button(
+                        "⬇️ Download Report (.pdf)",
+                        pdf_bytes,
+                        file_name="incident_simulation_report.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                        help="Export the consolidated report as a printable PDF.",
+                    )
+                else:
+                    st.button(
+                        "⬇️ PDF unavailable",
+                        use_container_width=True,
+                        disabled=True,
+                        help="PDF rendering failed for this report; use the Markdown download instead.",
+                    )
             with c3:
                 _copy_button("📋 Copy Full Output", md_text)
         with st.expander("Full Markdown Report", expanded=False):

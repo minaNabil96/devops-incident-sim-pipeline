@@ -26,12 +26,18 @@ def _make_stream_resp(events):
     return resp
 
 
-def _sse(pieces, finish=None, include_done=True):
+def _sse(pieces, finish=None, include_done=True, usage_tokens=None):
     lines = []
     for p in pieces:
         lines.append("data: " + json.dumps({"choices": [{"delta": {"content": p}}]}))
     if finish:
         lines.append("data: " + json.dumps({"choices": [{"delta": {}, "finish_reason": finish}]}))
+    if usage_tokens is not None:
+        # Usage-only chunk (empty choices), OpenAI include_usage style.
+        lines.append(
+            "data: "
+            + json.dumps({"choices": [], "usage": {"completion_tokens": usage_tokens}})
+        )
     if include_done:
         lines.append("data: [DONE]")
     return lines
@@ -482,6 +488,60 @@ def test_primary_success_skips_fallback():
 
 
 # ---------------------------------------------------------------------------
+# Test 21: provider usage.completion_tokens is used for the token count
+# ---------------------------------------------------------------------------
+def test_usage_tokens_reported():
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        # single content chunk (chunk_count would be 1) but usage says 128
+        return _make_stream_resp(
+            _sse(["The full answer in one chunk"], finish="stop", usage_tokens=128)
+        )
+
+    c = _build_client()
+    with patch.object(requests, "post", side_effect=mock):
+        r = c.generate("test", max_new_tokens=100)
+
+    assert r.content == "The full answer in one chunk"
+    assert r.tokens_used == 128, r.tokens_used
+    print("[OK] test_usage_tokens_reported")
+
+
+# ---------------------------------------------------------------------------
+# Test 22: single-chunk response without usage still reports > 0 tokens
+# ---------------------------------------------------------------------------
+def test_single_chunk_nonzero_tokens():
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        # One content chunk, no usage summary -> must not report 0 tokens
+        return _make_stream_resp(_sse(["hello there general kenobi"], finish="stop"))
+
+    c = _build_client()
+    with patch.object(requests, "post", side_effect=mock):
+        r = c.generate("test", max_new_tokens=100)
+
+    assert r.content == "hello there general kenobi"
+    assert r.tokens_used > 0, r.tokens_used
+    print("[OK] test_single_chunk_nonzero_tokens")
+
+
+# ---------------------------------------------------------------------------
+# Test 23: stream_options.include_usage is present in the request payload
+# ---------------------------------------------------------------------------
+def test_payload_requests_usage():
+    payloads = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        payloads.append(json)
+        return _make_stream_resp(_sse(["ok"], finish="stop"))
+
+    c = _build_client()
+    with patch.object(requests, "post", side_effect=mock):
+        c.generate("test", max_new_tokens=100)
+
+    assert payloads[0].get("stream_options") == {"include_usage": True}
+    print("[OK] test_payload_requests_usage")
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_complete_response()
     test_truncation_continues()
@@ -503,4 +563,7 @@ if __name__ == "__main__":
     test_fallback_payload_has_no_reasoning_effort()
     test_no_fallback_when_disabled()
     test_primary_success_skips_fallback()
-    print("\n=== ALL 20 TESTS PASSED ===")
+    test_usage_tokens_reported()
+    test_single_chunk_nonzero_tokens()
+    test_payload_requests_usage()
+    print("\n=== ALL 23 TESTS PASSED ===")

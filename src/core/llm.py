@@ -146,6 +146,10 @@ class LLMClient:
             "temperature": self.config.temperature,
             "top_p": self.config.top_p,
             "stream": True,
+            # Ask for a real usage summary in the final SSE chunk so token
+            # counts reflect the provider's own accounting rather than a
+            # per-chunk proxy (which reads 0 when content arrives in one chunk).
+            "stream_options": {"include_usage": True},
         }
         effort = self._reasoning_effort(provider)
         if effort:
@@ -251,7 +255,8 @@ class LLMClient:
         collected: list[str] = []
         finish_reason: Optional[str] = None
         saw_done = False
-        tokens_received = 0
+        chunk_count = 0
+        usage_tokens: Optional[int] = None
 
         for line in response.iter_lines():
             if not line:
@@ -269,21 +274,44 @@ class LLMClient:
 
             try:
                 chunk = json.loads(raw)
+
+                # Usage summary (final chunk when include_usage is set). Some
+                # providers send a usage-only chunk with an empty choices list.
+                usage = chunk.get("usage")
+                if isinstance(usage, dict):
+                    ct = usage.get("completion_tokens")
+                    if isinstance(ct, int) and ct >= 0:
+                        usage_tokens = ct
+
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue
                 choice = choices[0]
-                delta = (choice.get("delta") or {}).get("content", "")
-                if delta:
-                    collected.append(delta)
-                    tokens_received += 1
+                delta = choice.get("delta") or {}
+                # Primary content field; some reasoning providers also emit a
+                # separate reasoning_content stream we intentionally ignore.
+                content_piece = delta.get("content", "")
+                if content_piece:
+                    collected.append(content_piece)
+                    chunk_count += 1
                 fr = choice.get("finish_reason")
                 if fr:
                     finish_reason = fr
             except (json.JSONDecodeError, KeyError, IndexError, TypeError):
                 continue
 
-        return "".join(collected), finish_reason, saw_done, tokens_received
+        content = "".join(collected)
+        # Prefer the provider's reported completion tokens; fall back to the
+        # per-chunk count, and finally to a rough word estimate so a non-empty
+        # response never reports 0 tokens.
+        if usage_tokens is not None and usage_tokens > 0:
+            tokens_received = usage_tokens
+        elif chunk_count > 0:
+            tokens_received = chunk_count
+        else:
+            tokens_received = len(content.split()) if content.strip() else 0
+
+        return content, finish_reason, saw_done, tokens_received
 
     def _is_truncated(self, finish_reason: Optional[str], saw_done: bool) -> bool:
         """True when the model hit its token cap or the stream was cut off."""
