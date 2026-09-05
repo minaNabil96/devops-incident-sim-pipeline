@@ -365,6 +365,7 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 |---------|----------|
 | `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
 | Gemini daily free-tier quota exhausted | Set `ORCAROUTER_API_KEY` â€” the client auto-falls back to OrcaRouter (`deepseek/deepseek-v4-flash-free`) |
+| Fallback not triggering on Streamlit Cloud | Add `ORCAROUTER_API_KEY` under **App â†’ Settings â†’ Secrets** (keys are read from `st.secrets`), then reboot the app |
 | long-generation timeout | Already handled â€” client streams via SSE with 300s timeout |
 | `<think>` tags in output | Already handled â€” regex sanitizer strips reasoning blocks |
 | Streamlit port in use | `streamlit run app/main.py --server.port=8502` |

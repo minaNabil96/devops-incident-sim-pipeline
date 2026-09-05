@@ -38,10 +38,11 @@ def _detect_environment() -> str:
 
 def _resolve_env_key(name: str) -> str:
     """
-    Resolve an API key through a three-tier fallback chain:
+    Resolve an API key through a four-tier fallback chain:
     1. Google Colab Secrets (if in Colab)
-    2. .env file (loaded at import time)
-    3. Environment variable
+    2. Streamlit secrets (st.secrets) — covers Streamlit Cloud / HF Spaces
+    3. .env file (loaded at import time)
+    4. Environment variable
     """
     env = _detect_environment()
 
@@ -55,7 +56,21 @@ def _resolve_env_key(name: str) -> str:
         except Exception:
             pass
 
-    # Tier 2: .env file (already loaded by load_dotenv) / Tier 3: env var
+    # Tier 2: Streamlit secrets. On Streamlit Cloud, dashboard secrets are
+    # exposed via st.secrets; env-var mirroring is not guaranteed, so read
+    # st.secrets explicitly. Guarded so it never raises when Streamlit is
+    # absent or no secrets file exists (bare CLI / pytest / Colab).
+    try:
+        import streamlit as st  # noqa: PLC0415
+
+        if name in st.secrets:
+            value = st.secrets[name]
+            if value:
+                return str(value)
+    except Exception:
+        pass
+
+    # Tier 3: .env file (already loaded by load_dotenv) / Tier 4: env var
     return os.getenv(name) or ""
 
 
