@@ -10,6 +10,7 @@ validation criteria (7-stage lifecycle, 100% structural compliance) and the
 | Nemotron 3 120B (NVIDIA build API) | `nvidia--nemotron-3-super-120b-a12b/report.md` | 19,238 chars / 2,436 words | ❌ Stage 1 cut mid-JSON, Stage 6 cut mid action-item table | ⚠️ Partial |
 | Mistral Medium 3.5 128B (NVIDIA build API) | `mistralai--mistral-medium-3-5-128b/report.md` | 30,740 chars / 3,355 words | None (but stages wrapped in ```markdown fences) | ⚠️ Mostly, formatting-tainted |
 | DeepSeek v4 Flash (OrcaRouter fallback, pre-fix run) | `incident_simulation_report (5).md` (Desktop) | ~12,000 chars visible | ❌ Stages 1, 3, 6 fully EMPTY (reasoning starved content) | ❌ 4/7 stages with content |
+| DeepSeek v4 Flash (OrcaRouter, post-fix `aad6c21`) | `incident_simulation_deepreport.md` (Desktop) | ~35,000 chars / 7 stages | None — 7/7 complete | ✅ ~95% (all sections present; root-cause reveal discipline violated in S0) |
 
 ## DeepSeek v4 Flash (OrcaRouter) — detailed analysis
 
@@ -21,21 +22,44 @@ Stage 4's honest refusal to plan remediation was a cascade of Stage 3 being
 empty (no ROOT CAUSE CONTEXT). Fixed in commit `aad6c21` (3x token budget +
 8000 floor for reasoning providers, starvation detection + 4x retry).
 
-Post-fix live verification (all via OrcaRouter fallback): stage 0 → 6,462
-chars, stage 1 → 3,399 chars (valid Alertmanager v4 JSON), stage 2 → 6,690,
-stage 3 → 6,338, stage 4 → 4,018, stage 5 → 2,037, stage 6 → 14,644
-(Google SRE post-mortem, 28-min duration, SMART table). Total ≈ 44k chars —
-exceeds Gemini's 31.9k.
+Post-fix run (`incident_simulation_deepreport.md`) vs the paper (SPbETU 2026):
 
-Notable DeepSeek behavior vs the paper's Qwen reference:
-- Stage 0 is richer (6.5k vs 3.9k chars) and embeds subtle hidden-cause clues
-  (Redis 95% memory, rate-limiter bypass hints) without revealing it — strong
-  constraint adherence per paper §3.6/4.1.
-- Stage 2 Socratic mode asks genuine questions (paper-compliant), vs Qwen's
-  mixed questions+steps.
-- Distinct failure mode: over-caution (refusing to fabricate without evidence)
-  instead of hallucination — opposite of the context-drift problem in paper
-  §6.2; with intact context chaining it produces fully compliant output.
+- Stage 0: all 4 required sections present, metrics realistic; BUT violates
+  the paper's DO-NOT-REVEAL constraint — explicitly concludes "coordinated,
+  automated attack" and narrates remediation (HPA scaling, maxmemory-policy
+  switch) that belongs to Stages 2–4. Also has continuation-stitch artifacts:
+  duplicated "Service Dependencies"/"Current Conditions" sections, and the
+  stage is wrapped in a ```markdown fence (same issue as the Mistral report).
+- Stage 1: complete, valid Alertmanager v4 webhook payload (version "4",
+  groupKey, truncatedAlerts, fingerprint); values consistent with Stage 0
+  (34% error, 7.1s P95, Redis 950MB/1GB). PagerDuty summary embedded as an
+  annotation rather than a standalone block (minor).
+- Stage 2: exactly 3 steps with command/expected/rationale + guiding question;
+  guided-style commands rather than pure Socratic questions (partial).
+- Stage 3: exactly 15 evidence lines, graduated 4 INFO → 5 WARN → 6 ERROR,
+  subtle clue embedding (TEST-NET IPs, `rl:acc:anonymous` fallback bucket,
+  high-entropy account IDs). Log timestamps say 2023-10-24 while the incident
+  is 2025-04-08 — a context-chaining slip.
+- Stage 4: fully compliant — dry-run preview before the NetworkPolicy apply,
+  WARNING label on the destructive step, rollback per change, `production`
+  namespace throughout.
+- Stage 5: 3 audiences, "investigating — not resolved" honored, word limits
+  respected, 28-min duration cited (mentions 429s absent from the alert mix).
+- Stage 6: all 9 required sections; 4 SMART action items with owners and due
+  dates; strictly blameless (team names only); timeline 14:28→14:56 = exactly
+  28 minutes; MTTD/MTTA/MTTR appendix.
+
+Comparison with the paper's Qwen2.5-72B reference (§5):
+- Cross-stage numeric consistency is STRONGER than Qwen (no context drift —
+  the paper's §6.2 ShopFlow drift problem does not occur).
+- Output is ~2x deeper (~35k vs ~18.6k chars); artifacts include stacktraces
+  with file paths; remediation commands are more operationally realistic.
+- Constraint adherence is WEAKER: Qwen held the root cause through Stages 0–5
+  (paper §7.1-3); DeepSeek discloses it in Stage 0. Citable for §7.2:
+  DO-NOT-REVEAL enforcement is model-sensitive — stronger reasoning models
+  over-infer from embedded clues and need harder constraints.
+- Verdict: ~95% structural compliance; failures are behavioral (premature
+  disclosure), not structural.
 
 ## Per-criterion table
 
