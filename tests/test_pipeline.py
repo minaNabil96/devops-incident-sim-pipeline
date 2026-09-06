@@ -90,3 +90,77 @@ class TestSREIncidentPipeline:
         assert crew is not None
         assert len(crew.agents) == 7
         assert len(crew.tasks) == 7
+
+
+class TestRevealGuard:
+    """Tests for the hidden-cause reveal-guard (stages 0-2)."""
+
+    def test_detect_reveal_classification_terms(self):
+        """Classification vocabulary in stage 0-2 output is flagged."""
+        pipeline = SREIncidentPipeline()
+        assert pipeline._detect_reveal(
+            "This strongly suggests a coordinated, automated attack", ""
+        ) is not None
+        assert pipeline._detect_reveal("malicious traffic pattern detected", "") is not None
+        assert pipeline._detect_reveal("The rate limiter was bypassed by an exploit", "") is not None
+
+    def test_detect_reveal_clean_observations_pass(self):
+        """Raw observational content is not flagged."""
+        pipeline = SREIncidentPipeline()
+        clean = (
+            "Error rate increased from 0.2% to 34%. P95 latency rose to 7.1s. "
+            "Redis memory usage spiked from 430MB to 950MB with active key "
+            "evictions. Request volume rose from 1,200 to 4,300 req/min."
+        )
+        assert pipeline._detect_reveal(clean, "Redis cache penetration attack") is None
+
+    def test_detect_reveal_hidden_cause_fragment(self):
+        """Distinctive hidden-cause phrases are flagged even without buzzwords."""
+        pipeline = SREIncidentPipeline()
+        hidden = (
+            "Redis cache penetration attack: attackers exploited rate limiting "
+            "bypass vulnerability in payment-gateway-service"
+        )
+        leak = "Telemetry shows a rate limiting bypass vulnerability in the path"
+        assert pipeline._detect_reveal(leak, hidden) is not None
+
+    def test_run_stage_regenerates_on_reveal(self, simulation_params):
+        """A leaking stage 0 output triggers one regeneration with the clean result kept."""
+        mock_llm = MagicMock()
+        responses = [
+            MagicMock(content="Anomalies suggest a coordinated attack on the gateway", tokens_used=10),
+            MagicMock(content="Error rate rose to 34%. Redis memory at 950MB.", tokens_used=10),
+        ]
+        mock_llm.generate.side_effect = responses
+
+        pipeline = SREIncidentPipeline(llm_client=mock_llm)
+        result = pipeline.run_stage(0, simulation_params)
+
+        assert mock_llm.generate.call_count == 2
+        assert "attack" not in result.output.lower()
+        assert pipeline.context["output_stage_0"] == result.output
+
+    def test_run_stage_no_regeneration_when_clean(self, simulation_params):
+        """Clean stage output does not trigger the guard (single LLM call)."""
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = MagicMock(
+            content="Error rate 34%, P95 7.1s, Redis evictions active.", tokens_used=10
+        )
+
+        pipeline = SREIncidentPipeline(llm_client=mock_llm)
+        pipeline.run_stage(2, simulation_params)
+
+        assert mock_llm.generate.call_count == 1
+
+    def test_guard_skipped_for_late_stages(self, simulation_params):
+        """Stages 3-6 may reference the cause (RCA/post-mortem) — no guard."""
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = MagicMock(
+            content="Root cause: attackers exploited a rate limiting bypass", tokens_used=10
+        )
+
+        pipeline = SREIncidentPipeline(llm_client=mock_llm)
+        result = pipeline.run_stage(3, simulation_params)
+
+        assert mock_llm.generate.call_count == 1
+        assert "attackers" in result.output.lower()

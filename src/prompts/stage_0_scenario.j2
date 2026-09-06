@@ -18,6 +18,13 @@ OUTPUT REQUIREMENTS:
 3. Current Conditions — current load, recent deployments, anomalies
 4. Service Dependencies — upstream and downstream services for {{service_name}}
 
+CONSTRAINTS (ABSOLUTE — A VIOLATION RUINS THE TRAINING EXERCISE):
+- The trainee must DISCOVER the root cause themselves in later stages.
+- Describe anomalies ONLY as raw observations: metrics, error messages, log excerpts, traffic counts.
+- NEVER conclude, classify, suspect, hypothesize, or name ANY cause. Never use words like "attack", "attacker", "malicious", "coordinated", "exploit", "breach", "DDoS", "compromised", "penetration".
+- NEVER describe any response, mitigation, investigation, or remediation actions (no scaling events, config changes, failovers, policy switches, workarounds). The scenario ends AT THE MOMENT OF DETECTION — nobody has diagnosed or responded to anything yet.
+- Generate each of the 4 required sections EXACTLY ONCE (no repeated or "continued" sections).
+
 Format: {{output_format | default("Markdown")}}
 
 Keep the output self-contained — it will be injected as {{output_stage_0}} into the next stage.

@@ -15,6 +15,7 @@ Two execution paths are exposed:
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -127,6 +128,48 @@ class SREIncidentPipeline:
                 self.context[f"output_stage_{i}"] = path.read_text(encoding="utf-8")
         return self.context
 
+    # Words that indicate the model is NAMING/CLASSIFYING a cause instead of
+    # describing raw observations. Must never appear in stage 0-2 outputs.
+    _REVEAL_TERMS = (
+        "attack",
+        "attacker",
+        "attackers",
+        "malicious",
+        "coordinated",
+        "exploit",
+        "breach",
+        "ddos",
+        "denial of service",
+        "compromised",
+        "penetration",
+        "adversarial",
+        "adversary",
+    )
+
+    def _detect_reveal(self, content: str, hidden_cause: str) -> Optional[str]:
+        """
+        Return the first cause-revealing fragment found in ``content``, or None.
+
+        Two detection layers:
+        1. Classification vocabulary (attack/malicious/exploit/...) that names
+           a cause rather than observing symptoms.
+        2. Distinctive 4+-word fragments of the hidden cause itself.
+        """
+        if not content:
+            return None
+        low = content.lower()
+        for term in self._REVEAL_TERMS:
+            if term in low:
+                return term
+        if hidden_cause:
+            words = re.findall(r"[a-z]{4,}", hidden_cause.lower())
+            for n in (5, 4):
+                for i in range(len(words) - n + 1):
+                    phrase = " ".join(words[i : i + n])
+                    if phrase and phrase in low:
+                        return phrase
+        return None
+
     def run_stage(
         self,
         stage_index: int,
@@ -184,6 +227,46 @@ class SREIncidentPipeline:
         # Call LLM
         max_tokens = self.TOKEN_BUDGETS.get(stage_index, 1500)
         response = self.llm.generate(prompt, max_new_tokens=max_tokens)
+
+        # Reveal-guard: stages 0-2 must not disclose or classify the hidden
+        # cause (the trainee discovers it in Stage 3-6). If the model leaked
+        # (notably DeepSeek over-inferring from embedded clues), regenerate
+        # once with an escalated constraint. Never hard-fails the pipeline.
+        if stage_index <= 2:
+            hidden_cause = str(params.get("hidden_cause", ""))
+            leaked = self._detect_reveal(response.content, hidden_cause)
+            if leaked:
+                print(
+                    f"  [reveal-guard] Stage {stage_index} output contains "
+                    f"cause-revealing language ({leaked!r}); regenerating..."
+                )
+                correction = (
+                    f"\n\nCRITICAL CORRECTION — REGENERATE COMPLETELY:\n"
+                    f"Your previous draft revealed the hidden root cause "
+                    f"(it contained {leaked!r}). The trainee must discover "
+                    f"the cause themselves in later stages. Absolute rules "
+                    f"for the regenerated output:\n"
+                    f"- Describe anomalies ONLY as raw observations (metrics, "
+                    f"errors, log lines, traffic counts).\n"
+                    f"- NEVER conclude, classify, suspect, or name any cause; "
+                    f"never use words like attack, malicious, exploit, "
+                    f"coordinated, breach, DDoS, compromised.\n"
+                    f"- NEVER describe any response, mitigation, or remediation "
+                    f"— the incident is at the moment of detection.\n"
+                    f"- Produce the complete output again following ALL of the "
+                    f"original requirements above."
+                )
+                retry = self.llm.generate(
+                    prompt + correction, max_new_tokens=max_tokens
+                )
+                retry_leak = self._detect_reveal(retry.content, hidden_cause)
+                if retry.content.strip() and not retry_leak:
+                    response = retry
+                elif retry_leak:
+                    print(
+                        f"  [reveal-guard] WARNING: retry still contains "
+                        f"{retry_leak!r}; using best-effort output"
+                    )
 
         # Store in context
         self.context[f"output_stage_{stage_index}"] = response.content

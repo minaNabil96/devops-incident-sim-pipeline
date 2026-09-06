@@ -37,6 +37,8 @@ CONSTRAINTS:
 - Clue visibility = "{{clue_visibility}}" determines how obvious the hints are
 - If clue_visibility == "misleading", include a red herring
 - Only provide evidence, never conclusions about root cause
+- Use neutral, observational vocabulary — never words like "attack", "attacker", "malicious", "exploit", or "coordinated"; describe traffic and errors as raw data
+- All artifact timestamps MUST use the same date and fall within the incident window implied by the alert context
 - DO NOT output your internal reasoning, planning steps, or thoughts.
 - DO NOT include any meta-commentary about how you are generating the clues.
 - Output ONLY the 3 requested sections (ARTIFACTS, ANALYSIS, NEXT STEP).
