@@ -1,6 +1,6 @@
 # Model Comparison: Incident Simulation Report Quality
 
-Three-way comparison of generated incident reports against the SPbETU-2026 paper
+Four-way comparison of generated incident reports against the SPbETU-2026 paper
 validation criteria (7-stage lifecycle, 100% structural compliance) and the
 `DEFAULT_HIDDEN_CAUSE` in `src/pipeline.py`.
 
@@ -9,6 +9,33 @@ validation criteria (7-stage lifecycle, 100% structural compliance) and the
 | Gemini 3.6 Flash (Google, OpenAI-compatible) | `incident_simulation_report.md` (Desktop) | 31,888 chars / 3,744 words | None — 7/7 stages complete | ✅ All 20 structural criteria |
 | Nemotron 3 120B (NVIDIA build API) | `nvidia--nemotron-3-super-120b-a12b/report.md` | 19,238 chars / 2,436 words | ❌ Stage 1 cut mid-JSON, Stage 6 cut mid action-item table | ⚠️ Partial |
 | Mistral Medium 3.5 128B (NVIDIA build API) | `mistralai--mistral-medium-3-5-128b/report.md` | 30,740 chars / 3,355 words | None (but stages wrapped in ```markdown fences) | ⚠️ Mostly, formatting-tainted |
+| DeepSeek v4 Flash (OrcaRouter fallback, pre-fix run) | `incident_simulation_report (5).md` (Desktop) | ~12,000 chars visible | ❌ Stages 1, 3, 6 fully EMPTY (reasoning starved content) | ❌ 4/7 stages with content |
+
+## DeepSeek v4 Flash (OrcaRouter) — detailed analysis
+
+Pre-fix run (`incident_simulation_report (5).md`): DeepSeek v4 is a reasoning
+model that streams hidden `reasoning_content` before any visible `content`,
+and the thinking consumed the whole `max_tokens` budget on the three heaviest
+structured stages (1 Alert JSON, 3 RCA, 6 Post-mortem) — they were saved empty.
+Stage 4's honest refusal to plan remediation was a cascade of Stage 3 being
+empty (no ROOT CAUSE CONTEXT). Fixed in commit `aad6c21` (3x token budget +
+8000 floor for reasoning providers, starvation detection + 4x retry).
+
+Post-fix live verification (all via OrcaRouter fallback): stage 0 → 6,462
+chars, stage 1 → 3,399 chars (valid Alertmanager v4 JSON), stage 2 → 6,690,
+stage 3 → 6,338, stage 4 → 4,018, stage 5 → 2,037, stage 6 → 14,644
+(Google SRE post-mortem, 28-min duration, SMART table). Total ≈ 44k chars —
+exceeds Gemini's 31.9k.
+
+Notable DeepSeek behavior vs the paper's Qwen reference:
+- Stage 0 is richer (6.5k vs 3.9k chars) and embeds subtle hidden-cause clues
+  (Redis 95% memory, rate-limiter bypass hints) without revealing it — strong
+  constraint adherence per paper §3.6/4.1.
+- Stage 2 Socratic mode asks genuine questions (paper-compliant), vs Qwen's
+  mixed questions+steps.
+- Distinct failure mode: over-caution (refusing to fabricate without evidence)
+  instead of hallucination — opposite of the context-drift problem in paper
+  §6.2; with intact context chaining it produces fully compliant output.
 
 ## Per-criterion table
 
