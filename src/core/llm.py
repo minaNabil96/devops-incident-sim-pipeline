@@ -68,6 +68,12 @@ class _Provider:
     model: str
     headers: dict
     is_reasoning_model: bool
+    # Reasoning models (e.g. DeepSeek) spend part of the token budget on
+    # hidden reasoning_content before emitting any visible content. Scale the
+    # requested budget up and enforce a floor so the visible answer is never
+    # starved. 1.0 / 0 == no change.
+    token_scale: float = 1.0
+    token_floor: int = 0
 
 
 _QUOTA_MARKERS = (
@@ -133,16 +139,21 @@ class LLMClient:
                         "Authorization": f"Bearer {fallback_key}",
                         "Content-Type": "application/json",
                     },
-                    # DeepSeek is a reasoning model but OrcaRouter does not
-                    # accept Gemini's reasoning_effort field, so leave it off.
-                    is_reasoning_model=False,
+                    # DeepSeek v4 is a reasoning model: it emits hidden
+                    # `reasoning_content` that consumes the token budget before
+                    # any visible `content`. OrcaRouter does not accept Gemini's
+                    # reasoning_effort field, so instead we enlarge the budget
+                    # (x3, min 8000) so the visible answer is never starved.
+                    is_reasoning_model=True,
+                    token_scale=3.0,
+                    token_floor=8000,
                 )
             )
 
     def _base_payload(self, provider: _Provider, max_new_tokens: int) -> dict:
         payload = {
             "model": provider.model,
-            "max_tokens": max_new_tokens,
+            "max_tokens": self._provider_token_budget(provider, max_new_tokens),
             "temperature": self.config.temperature,
             "top_p": self.config.top_p,
             "stream": True,
@@ -155,6 +166,19 @@ class LLMClient:
         if effort:
             payload["reasoning_effort"] = effort
         return payload
+
+    @staticmethod
+    def _provider_token_budget(provider: _Provider, max_new_tokens: int) -> int:
+        """Scale the requested output budget for reasoning-heavy providers.
+
+        DeepSeek and similar models spend part of ``max_tokens`` on hidden
+        reasoning before any visible content, so a budget sized for a
+        non-reasoning model can be fully consumed by thinking and return an
+        empty answer. Scaling up (and applying a floor) keeps the visible
+        answer from being starved.
+        """
+        scaled = int(max_new_tokens * max(provider.token_scale, 1.0))
+        return max(scaled, provider.token_floor, max_new_tokens)
 
     def _reasoning_effort(self, provider: _Provider) -> Optional[str]:
         """Best-effort thinking reduction for Gemini 3.x reasoning models.
@@ -244,17 +268,22 @@ class LLMClient:
     @staticmethod
     def _consume_stream(
         response: requests.Response,
-    ) -> tuple[str, Optional[str], bool, int]:
+    ) -> tuple[str, Optional[str], bool, int, bool]:
         """
         Drain an SSE stream, returning:
-          (content, finish_reason, saw_done, tokens_received)
+          (content, finish_reason, saw_done, tokens_received, saw_reasoning)
 
         ``saw_done`` is False when the connection ends before the ``[DONE]``
         marker, which is the signature of a silently dropped stream.
+        ``saw_reasoning`` is True when the provider emitted hidden
+        ``reasoning_content`` (reasoning models such as DeepSeek), which is
+        relevant when the visible ``content`` is empty because the token
+        budget was consumed by thinking.
         """
         collected: list[str] = []
         finish_reason: Optional[str] = None
         saw_done = False
+        saw_reasoning = False
         chunk_count = 0
         usage_tokens: Optional[int] = None
 
@@ -288,8 +317,10 @@ class LLMClient:
                     continue
                 choice = choices[0]
                 delta = choice.get("delta") or {}
-                # Primary content field; some reasoning providers also emit a
-                # separate reasoning_content stream we intentionally ignore.
+                # Reasoning models (DeepSeek) stream hidden thinking in a
+                # separate reasoning_content field before the visible answer.
+                if delta.get("reasoning_content") or delta.get("reasoning"):
+                    saw_reasoning = True
                 content_piece = delta.get("content", "")
                 if content_piece:
                     collected.append(content_piece)
@@ -311,7 +342,7 @@ class LLMClient:
         else:
             tokens_received = len(content.split()) if content.strip() else 0
 
-        return content, finish_reason, saw_done, tokens_received
+        return content, finish_reason, saw_done, tokens_received, saw_reasoning
 
     def _is_truncated(self, finish_reason: Optional[str], saw_done: bool) -> bool:
         """True when the model hit its token cap or the stream was cut off."""
@@ -450,10 +481,35 @@ class LLMClient:
                 payload = self._base_payload(provider, max_new_tokens)
                 payload["messages"] = [{"role": "user", "content": prompt}]
 
-                content, finish_reason, saw_done, tokens_received = self._post_stream(
-                    provider, payload
+                content, finish_reason, saw_done, tokens_received, saw_reasoning = (
+                    self._post_stream(provider, payload)
                 )
                 content = self._strip_reasoning(content).strip()
+
+                # Reasoning-model starvation: the model spent the whole token
+                # budget on hidden reasoning_content and never emitted a visible
+                # answer (empty content, truncated by length). Retry once with a
+                # much larger budget so the answer has room to be produced.
+                budget = max_new_tokens
+                if (
+                    not content
+                    and saw_reasoning
+                    and finish_reason == "length"
+                    and attempt < max_retries
+                ):
+                    self._log_status(
+                        attempt,
+                        f"{provider.name}: reasoning consumed budget, "
+                        f"no visible content; retrying with larger budget",
+                    )
+                    failures.append("reasoning starved content")
+                    budget = min(max_new_tokens * 4, self.MAX_CONTINUATION_TOKENS)
+                    payload = self._base_payload(provider, budget)
+                    payload["messages"] = [{"role": "user", "content": prompt}]
+                    content, finish_reason, saw_done, tokens_received, saw_reasoning = (
+                        self._post_stream(provider, payload)
+                    )
+                    content = self._strip_reasoning(content).strip()
 
                 # Continuation loop: recover from token-cap / dropped-stream
                 # truncation until the response ends cleanly or we hit limits.
@@ -479,11 +535,11 @@ class LLMClient:
                             ),
                         },
                     ]
-                    cont_payload = self._base_payload(provider, max_new_tokens)
+                    cont_payload = self._base_payload(provider, budget)
                     cont_payload["messages"] = messages
 
-                    cont_content, finish_reason, saw_done, cont_tokens = self._post_stream(
-                        provider, cont_payload
+                    cont_content, finish_reason, saw_done, cont_tokens, _ = (
+                        self._post_stream(provider, cont_payload)
                     )
                     cont_content = self._strip_reasoning(cont_content).strip()
                     if not cont_content:

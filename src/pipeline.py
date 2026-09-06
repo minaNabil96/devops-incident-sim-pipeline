@@ -147,6 +147,13 @@ class SREIncidentPipeline:
         stage_name = self.STAGE_NAMES[stage_index]
         start_time = time.time()
 
+        # Seed report metadata from params so the consolidated header
+        # renders the real application name (not "Unknown"). Done here so
+        # BOTH execution paths (run_full_pipeline and the Streamlit
+        # phase-by-phase runner calling run_stage directly) are covered.
+        if params.get("application_name"):
+            self.context["application_name"] = params["application_name"]
+
         # Resume short-circuit: reuse an existing, non-empty stage output.
         if resume:
             disk_file = self._stage_file(stage_name)
