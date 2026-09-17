@@ -124,7 +124,9 @@ class LLMClient:
                 "  Colab Secrets | .env file | Environment variable"
             )
 
-        # Primary provider: Google Gemini (OpenAI-compatible endpoint).
+        # Primary providers: Google Gemini (OpenAI-compatible endpoint). The
+        # ordered model chain gives resilience against model retirement and
+        # multiplies free-tier capacity (quota is granted per model per day).
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -133,10 +135,11 @@ class LLMClient:
             _Provider(
                 name="gemini",
                 base_url=self.config.base_url,
-                model=self.config.model,
+                model=gemini_model,
                 headers=self.headers,
-                is_reasoning_model=self.config.model.startswith("gemini-3"),
+                is_reasoning_model=gemini_model.startswith("gemini-3"),
             )
+            for gemini_model in self.config.gemini_model_chain
         ]
 
         # Fallback provider: OrcaRouter (only if configured + a key exists).
@@ -161,6 +164,11 @@ class LLMClient:
                     token_floor=8000,
                 )
             )
+
+        print(
+            "  [llm] provider chain: "
+            + " -> ".join(p.model for p in self._providers)
+        )
 
     def _base_payload(self, provider: _Provider, max_new_tokens: int) -> dict:
         payload = {
@@ -200,15 +208,13 @@ class LLMClient:
         ``reasoning_effort`` field is documented as supported on the
         Gemini OpenAI-compat endpoint; if the deployed model rejects it
         with HTTP 400, ``_post_stream`` retries the request without it.
-        Only applied to the primary Gemini provider.
+        Only applied to Gemini 3.x models (never the OrcaRouter fallback).
         """
-        if provider.name != "gemini":
+        if not provider.model.startswith("gemini-3"):
             return None
         if self.config.reasoning_effort is not None:
             return self.config.reasoning_effort or None
-        if provider.is_reasoning_model:
-            return "low"
-        return None
+        return "low"
 
     def _post_stream(self, provider: _Provider, payload: dict):
         """POST + classify. Returns (content, finish_reason, saw_done, tokens)."""
@@ -516,7 +522,7 @@ class LLMClient:
         via regex sanitization.
         """
         max_retries = max_retries or self.config.max_retries
-        last_error: Optional[Exception] = None
+        provider_failures: list[str] = []
 
         for index, provider in enumerate(self._providers):
             is_last = index == len(self._providers) - 1
@@ -524,18 +530,30 @@ class LLMClient:
                 return self._generate_with_provider(
                     provider, prompt, max_new_tokens, max_retries
                 )
-            except (QuotaExhaustedError, LLMConfigError, RuntimeError) as exc:
-                last_error = exc
+            except (
+                QuotaExhaustedError,
+                LLMConfigError,
+                ProviderAccessError,
+                RuntimeError,
+            ) as exc:
+                provider_failures.append(f"{provider.name} [{provider.model}]: {exc}")
                 if is_last:
-                    raise
+                    detail = "\n".join(f"  - {f}" for f in provider_failures)
+                    # Preserve the exception type (callers branch on it) while
+                    # surfacing EVERY provider's failure — otherwise the last
+                    # provider's error hides why the earlier ones failed.
+                    raise type(exc)(
+                        f"All {len(self._providers)} LLM providers failed:\n{detail}"
+                    ) from exc
                 self._log_status(
                     -1,
-                    f"{provider.name} failed ({type(exc).__name__}); "
-                    f"falling back to {self._providers[index + 1].name}",
+                    f"{provider.name} [{provider.model}] failed "
+                    f"({type(exc).__name__}); falling back to "
+                    f"{self._providers[index + 1].name} "
+                    f"[{self._providers[index + 1].model}]",
                 )
 
-        # Only reached if the provider list was empty (never in practice).
-        raise RuntimeError(f"No LLM providers available: {last_error}")
+        raise RuntimeError("No LLM providers configured")
 
     def _generate_with_provider(
         self,

@@ -364,7 +364,7 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 | Problem | Solution |
 |---------|----------|
 | `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
-| Gemini daily free-tier quota exhausted | Set `ORCAROUTER_API_KEY` â€” the client auto-falls back to OrcaRouter (`deepseek/deepseek-v4-flash-free`) |
+| Gemini daily free-tier quota exhausted | Each Gemini model has its own free quota — the client tries `GEMINI_MODELS` in order (default `gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash`), then falls back to OrcaRouter if configured |
 | Fallback not triggering on Streamlit Cloud | Add `ORCAROUTER_API_KEY` under **App â†’ Settings â†’ Secrets** (keys are read from `st.secrets`), then reboot the app |
 | `ProviderAccessError`: OrcaRouter free models not available | Link an established GitHub account in the OrcaRouter **profile settings** (newly created accounts do not qualify), or add credits |
 | `ProviderAccessError`: request exceeded the free-tier prompt cap | Free OrcaRouter requests cap prompt size; deep stages inject long context. Use the paid base model or shorten prior-stage context |

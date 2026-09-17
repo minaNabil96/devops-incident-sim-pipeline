@@ -57,6 +57,7 @@ def _build_client(max_retries=2, model="gemini-3.8-flash"):
     cfg = APIConfig(
         base_url="http://x",
         model=model,
+        gemini_models="",  # single Gemini provider for deterministic tests
         max_retries=max_retries,
         timeout_s=5,
         enable_fallback=False,
@@ -69,6 +70,7 @@ def _build_fallback_client(max_retries=2):
     cfg = APIConfig(
         base_url="http://primary",
         model="gemini-3.8-flash",
+        gemini_models="",
         fallback_base_url="http://fallback",
         fallback_model="deepseek/deepseek-v4-flash-free",
         enable_fallback=True,
@@ -679,6 +681,85 @@ def test_gemini_geo_restriction_message():
 
 
 # ---------------------------------------------------------------------------
+# Test 29: Gemini model chain falls through to the next model
+# ---------------------------------------------------------------------------
+def test_gemini_model_chain_falls_through():
+    models_called = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        models_called.append(json["model"])
+        if json["model"] == "gemini-3.8-flash":
+            return _err_resp(404, body='{"error":{"code":404,"message":"model not found"}}')
+        return _make_stream_resp(_sse(["From 3.7"], finish="stop"))
+
+    cfg = APIConfig(
+        base_url="http://x",
+        model="gemini-3.8-flash",
+        gemini_models="gemini-3.7-flash",
+        max_retries=2,
+        timeout_s=5,
+        enable_fallback=False,
+    )
+    c = LLMClient(cfg)
+    with patch.object(requests, "post", side_effect=mock):
+        r = c.generate("test", max_new_tokens=100)
+
+    assert models_called == ["gemini-3.8-flash", "gemini-3.7-flash"]
+    assert r.content == "From 3.7"
+    assert r.model == "gemini-3.7-flash"
+    print("[OK] test_gemini_model_chain_falls_through")
+
+
+# ---------------------------------------------------------------------------
+# Test 30: gemini_model_chain property dedupes and keeps GEMINI_MODEL first
+# ---------------------------------------------------------------------------
+def test_gemini_model_chain_property():
+    cfg = APIConfig(
+        model="gemini-3.8-flash",
+        gemini_models="gemini-3.7-flash, gemini-3.8-flash ,gemini-3.6-flash",
+    )
+    assert cfg.gemini_model_chain == [
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+    ]
+    single = APIConfig(model="gemini-3.8-flash", gemini_models="")
+    assert single.gemini_model_chain == ["gemini-3.8-flash"]
+    print("[OK] test_gemini_model_chain_property")
+
+
+# ---------------------------------------------------------------------------
+# Test 31: final error lists EVERY provider's failure (not just the last)
+# ---------------------------------------------------------------------------
+def test_error_summary_includes_all_providers():
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        if url == "http://primary":
+            return _err_resp(
+                429,
+                body='{"error":{"code":429,"message":"You exceeded your current quota"}}',
+            )
+        return _err_resp(
+            429,
+            body='{"error":{"code":"free_rate_limited","message":"Free models are '
+                 'not available to this account yet.","metadata":'
+                 '{"reason":"err_free_access_denied","retryable":false}}}',
+        )
+
+    c = _build_fallback_client(max_retries=2)
+    with patch.object(requests, "post", side_effect=mock):
+        try:
+            c.generate("test", max_new_tokens=100)
+        except ProviderAccessError as e:
+            msg = str(e)
+            assert "gemini-3.8-flash" in msg, msg
+            assert "orcarouter" in msg, msg
+            assert "quota" in msg.lower(), msg
+            print("[OK] test_error_summary_includes_all_providers")
+            return
+    raise AssertionError("expected ProviderAccessError")
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_complete_response()
     test_truncation_continues()
@@ -708,4 +789,7 @@ if __name__ == "__main__":
     test_orcarouter_free_rate_is_transient()
     test_parse_error_meta()
     test_gemini_geo_restriction_message()
-    print("\n=== ALL 28 TESTS PASSED ===")
+    test_gemini_model_chain_falls_through()
+    test_gemini_model_chain_property()
+    test_error_summary_includes_all_providers()
+    print("\n=== ALL 31 TESTS PASSED ===")

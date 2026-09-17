@@ -104,6 +104,14 @@ class APIConfig(BaseModel):
         "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
     )
     model: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    # Ordered Gemini models to attempt before the fallback provider. Google
+    # retires Flash models quickly (2.5 -> 404) and the free tier grants a
+    # separate daily quota per model, so a chain adds both resilience and
+    # free capacity. GEMINI_MODEL is always tried first.
+    gemini_models: str = os.getenv(
+        "GEMINI_MODELS",
+        "gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash",
+    )
     max_tokens: int = 8192
     temperature: float = 0.1
     top_p: float = 0.9
@@ -131,6 +139,16 @@ class APIConfig(BaseModel):
     )
 
     key_resolution: APIKeyResolution = APIKeyResolution()
+
+    @property
+    def gemini_model_chain(self) -> list[str]:
+        """Ordered, de-duplicated Gemini models to try before the fallback."""
+        chain: list[str] = []
+        for candidate in [self.model, *self.gemini_models.split(",")]:
+            candidate = candidate.strip()
+            if candidate and candidate not in chain:
+                chain.append(candidate)
+        return chain
 
 
 class SimulationDefaults(BaseModel):
