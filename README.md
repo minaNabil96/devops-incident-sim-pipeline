@@ -366,7 +366,7 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 |---------|----------|
 | `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
 | Gemini daily free-tier quota exhausted | Each Gemini model has its own free quota — the client tries every model × key (`GEMINI_MODELS`, default `gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash`; extra keys via `GEMINI_API_KEYS`), then AgentRouter, then OrcaRouter |
-| Want more Gemini free capacity | Add `GEMINI_API_KEYS` with keys from **different Google Cloud projects** (quota is per project per model, so keys from one project share a single quota) |
+| Want more Gemini capacity | Add `GEMINI_API_KEYS` (comma-separated, or a TOML list in Streamlit secrets) — every key is tried for every model |
 | Fallback not triggering on Streamlit Cloud | Add `ORCAROUTER_API_KEY` under **App â†’ Settings â†’ Secrets** (keys are read from `st.secrets`), then reboot the app |
 | `ProviderAccessError`: OrcaRouter free models not available | Link an established GitHub account in the OrcaRouter **profile settings** (newly created accounts do not qualify), or add credits |
 | `ProviderAccessError`: request exceeded the free-tier prompt cap | Free OrcaRouter requests cap prompt size; deep stages inject long context. Use the paid base model or shorten prior-stage context |

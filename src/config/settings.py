@@ -88,9 +88,8 @@ def _resolve_api_keys() -> list[str]:
     Resolve ALL Gemini API keys, de-duplicated and order-preserving.
 
     Sources: GEMINI_API_KEY (single) and GEMINI_API_KEYS (comma-separated or
-    a TOML list in st.secrets). Multiple keys multiply free-tier capacity —
-    but note Gemini quota is per Google Cloud *project*, so keys from the same
-    project still share one quota; use keys from different projects.
+    a TOML list in st.secrets). Every key is tried for every model before the
+    chain moves on to the secondary providers.
     """
     keys: list[str] = []
     for name in ("GEMINI_API_KEY", "GEMINI_API_KEYS"):

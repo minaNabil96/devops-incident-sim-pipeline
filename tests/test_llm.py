@@ -885,6 +885,42 @@ def test_agentrouter_serves_after_gemini_fails():
 
 
 # ---------------------------------------------------------------------------
+# Test 36: 401 fails fast (no retries) and the chain moves to the next provider
+# ---------------------------------------------------------------------------
+def test_401_fails_fast_and_falls_through():
+    calls: list[str] = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        calls.append(url)
+        if url == "http://x":
+            return _err_resp(401, body='{"message":"UNAUTHENTICATED"}')
+        return _make_stream_resp(_sse(["from agentrouter"], finish="stop"))
+
+    cfg = APIConfig(
+        base_url="http://x",
+        model="gemini-3.8-flash",
+        gemini_models="",
+        agentrouter_base_url="http://agentrouter",
+        agentrouter_model="deepseek-v4-flash",
+        enable_fallback=False,
+        max_retries=3,
+    )
+    with patch("src.core.llm._resolve_api_keys", return_value=["k1"]), \
+         patch("src.core.llm._resolve_agentrouter_api_key", return_value="ar-key"):
+        c = LLMClient(cfg)
+
+    with patch.object(requests, "post", side_effect=mock), \
+         patch("src.core.llm.time.sleep") as sleep_mock:
+        r = c.generate("test", max_new_tokens=50)
+
+    assert r.content == "from agentrouter"
+    # 1 call for the 401 primary (no retries) + 1 for the secondary
+    assert calls == ["http://x", "http://agentrouter"], calls
+    assert sleep_mock.call_count == 0, "401 must not trigger backoff sleeps"
+    print("[OK] test_401_fails_fast_and_falls_through")
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_complete_response()
     test_truncation_continues()
@@ -921,4 +957,5 @@ if __name__ == "__main__":
     test_second_gemini_key_used_when_first_exhausted()
     test_agentrouter_provider_order()
     test_agentrouter_serves_after_gemini_fails()
-    print("\n=== ALL 35 TESTS PASSED ===")
+    test_401_fails_fast_and_falls_through()
+    print("\n=== ALL 36 TESTS PASSED ===")

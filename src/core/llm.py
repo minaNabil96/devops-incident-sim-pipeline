@@ -127,9 +127,8 @@ class LLMClient:
 
         # Primary providers: Google Gemini (OpenAI-compatible endpoint).
         # Ordered model-major: for each model try EVERY key before dropping to
-        # the next model, so the newest model is kept as long as any key has
-        # quota. Multiple keys and multiple models both multiply free capacity
-        # (quota is per Google Cloud project per model).
+        # the next model, so the newest model is kept as long as any key can
+        # still serve it.
         self.headers = {
             "Authorization": f"Bearer {gemini_keys[0]}",
             "Content-Type": "application/json",
@@ -320,7 +319,11 @@ class LLMClient:
                 f"HTTP 429: {body}", retry_after=retry_after
             )
 
-        if response.status_code in (400, 403, 404):
+        # 401/403 are authentication/authorisation failures — retrying the
+        # identical request cannot succeed, so fail fast and let the chain
+        # move to the next provider (a 401 is common when a secondary
+        # provider's key is missing, wrong, or blocked).
+        if response.status_code in (400, 401, 403, 404):
             if "user location is not supported" in full_body.lower():
                 raise ProviderAccessError(
                     "Google Gemini rejects requests from this location (HTTP 400 "
