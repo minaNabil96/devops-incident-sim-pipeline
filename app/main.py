@@ -14,6 +14,10 @@ import json
 import sys
 from pathlib import Path
 
+# Build marker: bump when shipping deploy-relevant changes. Visible in the
+# sidebar so it is immediately obvious whether the deployed code is current.
+APP_BUILD = "b6afd2ec — Gemini chain (3.8→3.7→3.6) + OrcaRouter fallback + reveal-guard"
+
 # Ensure the project root is importable regardless of launch directory
 # (Streamlit / standalone script runs insert their own dir into sys.path).
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -75,6 +79,7 @@ def init_session_state() -> None:
     st.session_state.setdefault("start_ts", None)
     st.session_state.setdefault("run_params", None)
     st.session_state.setdefault("run_params_ready", False)
+    st.session_state.setdefault("run_error", None)
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +133,20 @@ def render_sidebar() -> dict[str, Any]:
         "</div>",
         unsafe_allow_html=True,
     )
+
+    # Deployment diagnostic: makes it obvious whether the running app has the
+    # latest code (and which LLM chain is configured) without reading logs.
+    try:
+        from src.config.settings import APIConfig, _resolve_fallback_api_key
+
+        _cfg = APIConfig()
+        _chain = " → ".join(_cfg.gemini_model_chain)
+        if _cfg.enable_fallback and _resolve_fallback_api_key():
+            _chain += " → orcaRouter"
+        st.sidebar.caption(f"⚙️ Build: {APP_BUILD}")
+        st.sidebar.caption(f"LLM chain: {_chain}")
+    except Exception:  # noqa: BLE001 - diagnostics must never break the app
+        st.sidebar.caption(f"⚙️ Build: {APP_BUILD}")
 
     return {
         **d.model_dump(),
@@ -274,6 +293,7 @@ def start_run(params: dict[str, Any]) -> None:
     st.session_state.start_ts = datetime.now()
     st.session_state.run_params = params
     st.session_state.run_params_ready = True
+    st.session_state.run_error = None
 
 
 def advance_pipeline() -> None:
@@ -292,8 +312,15 @@ def advance_pipeline() -> None:
         return
 
     params = st.session_state.run_params
-    with st.spinner(f"Running {STAGE_ICONS[idx][2]} stage…"):
-        stage_result = pipe.run_stage(idx, params)
+    try:
+        with st.spinner(f"Running {STAGE_ICONS[idx][2]} stage…"):
+            stage_result = pipe.run_stage(idx, params)
+    except Exception as exc:  # noqa: BLE001 - surface a readable failure in the UI
+        st.session_state.run_error = f"{type(exc).__name__}: {exc}"
+        st.session_state.run_params_ready = False
+        st.session_state.is_running = False
+        st.rerun()
+        return
 
     st.session_state.stage_results.append(stage_result)
     st.session_state.current_stage = idx + 1
@@ -402,6 +429,16 @@ def render_main_content(params: dict[str, Any]) -> None:
 
     render_stage_progress()
 
+    if st.session_state.get("run_error"):
+        st.error("❌ Simulation stopped — the LLM request failed.")
+        st.code(st.session_state.run_error, language="text")
+        st.caption(
+            "The message above lists every provider that was tried and why each "
+            "failed. Common causes: Gemini daily quota exhausted (resets at "
+            "00:00 UTC), Gemini unavailable in this region, or the OrcaRouter "
+            "account not yet entitled to free models."
+        )
+
     if st.session_state.is_running:
         st.info(
             f"⏳ Simulation in progress — stages appear below as they complete. "
@@ -420,6 +457,7 @@ def render_main_content(params: dict[str, Any]) -> None:
                 st.session_state.current_stage = -1
                 st.session_state.is_running = False
                 st.session_state.run_params_ready = False
+                st.session_state.run_error = None
                 st.rerun()
         with col3:
             if st.session_state.pipeline_result:
