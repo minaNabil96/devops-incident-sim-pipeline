@@ -50,7 +50,7 @@ license: mit
 
 The **DevOps Incident Simulation Pipeline** is a production-grade, multi-agent AI application that simulates the complete SRE incident lifecycle â€” from alert to blameless post-mortem. The system is orchestrated by **CrewAI**, with 7 specialized agents (Scenario Architect, Monitoring Simulator, SRE Mentor, RCA Analyst, Remediation Engineer, Incident Commander, Post-mortem Writer) each contributing a structured artifact to the incident narrative.
 
-Built on **Jinja2 prompt templating** and the **Google Gemini API (`gemini-3.7-flash`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
+Built on **Jinja2 prompt templating** and the **Google Gemini API (`gemini-3.8-flash`)**, the pipeline enforces strict industry compliance: Alertmanager v4 JSON schemas, `production` namespace consistency, Google SRE blameless post-mortem format, and SMART action items. The interactive **Streamlit frontend** gives trainees a control panel, real-time agent execution logs, and a professional results dashboard.
 
 The project achieves **100% structural compliance** with the academic paper *"Development of a set of prompt templates for simulation and response to incidents in DevOps"* (Saint Petersburg Electrotechnical University, 2026).
 
@@ -81,7 +81,7 @@ graph TD
 
     subgraph "LLM Backend"
         TPL[Jinja2 Templates<br/>src/prompts/*.j2] --> PIPE
-        LLM[LLMClient<br/>Google Gemini API · gemini-3.7-flash] -->|SSE Stream| PIPE
+        LLM[LLMClient<br/>Google Gemini API · gemini-3.8-flash] -->|SSE Stream| PIPE
         PIPE -->|regex <think> strip| CLEAN[Sanitized Output]
     end
 
@@ -366,6 +366,9 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 | `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
 | Gemini daily free-tier quota exhausted | Set `ORCAROUTER_API_KEY` â€” the client auto-falls back to OrcaRouter (`deepseek/deepseek-v4-flash-free`) |
 | Fallback not triggering on Streamlit Cloud | Add `ORCAROUTER_API_KEY` under **App â†’ Settings â†’ Secrets** (keys are read from `st.secrets`), then reboot the app |
+| `ProviderAccessError`: OrcaRouter free models not available | Link an established GitHub account in the OrcaRouter **profile settings** (newly created accounts do not qualify), or add credits |
+| `ProviderAccessError`: request exceeded the free-tier prompt cap | Free OrcaRouter requests cap prompt size; deep stages inject long context. Use the paid base model or shorten prior-stage context |
+| Gemini 400 `User location is not supported` | The Gemini API is unavailable in some regions. Run from a supported region (e.g. Streamlit Cloud), use a VPN, or set `GEMINI_BASE_URL` to a supported proxy |
 | long-generation timeout | Already handled â€” client streams via SSE with 300s timeout |
 | `<think>` tags in output | Already handled â€” regex sanitizer strips reasoning blocks |
 | Streamlit port in use | `streamlit run app/main.py --server.port=8502` |

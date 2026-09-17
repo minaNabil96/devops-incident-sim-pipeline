@@ -1,12 +1,12 @@
 """
 LLM Client for the Google Gemini API (OpenAI-compatible endpoint,
-default model: gemini-3.7-flash).
+default model: gemini-3.8-flash).
 
 Implements:
   - SSE streaming with live finish_reason capture
   - Truncation recovery (finish_reason == "length" or dropped stream)
   - Typed error classification (QuotaExhaustedError, LLMConfigError,
-    TransientAPIError) so callers can react appropriately
+    TransientAPIError, ProviderAccessError) so callers can react appropriately
   - Exponential backoff with Retry-After header support for transients
   - Auto-continuation of truncated responses so stages are never partial
   - Provider fallback: when the primary Gemini endpoint is quota-exhausted
@@ -48,6 +48,18 @@ class TransientAPIError(RuntimeError):
     def __init__(self, message: str, retry_after: Optional[float] = None) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+
+
+class ProviderAccessError(RuntimeError):
+    """
+    The provider account is not entitled to the requested model.
+
+    Not retryable: retrying the identical request fails forever. Raised for
+    OrcaRouter's ``err_free_access_denied`` (the workspace owner has not
+    linked an established GitHub account and has not added credits) and for
+    ``err_free_prompt_cap`` (the request exceeded the free tier's per-request
+    prompt-token ceiling).
+    """
 
 
 @dataclass
@@ -211,7 +223,9 @@ class LLMClient:
         if response.status_code == 200:
             return self._consume_stream(response)
 
-        body = response.text[:300].replace("\n", " ")
+        full_body = response.text
+        body = full_body[:300].replace("\n", " ")
+        error_code, error_reason = self._parse_error_meta(full_body)
         retry_after = self._parse_retry_after(response.headers.get("Retry-After"))
 
         if response.status_code == 400 and payload.get("reasoning_effort"):
@@ -226,7 +240,35 @@ class LLMClient:
             )
             if response.status_code == 200:
                 return self._consume_stream(response)
-            body = response.text[:300].replace("\n", " ")
+            full_body = response.text
+            body = full_body[:300].replace("\n", " ")
+            error_code, error_reason = self._parse_error_meta(full_body)
+
+        # OrcaRouter free-tier entitlement: permanent, retrying cannot help.
+        if (
+            error_reason == "err_free_access_denied"
+            or "err_free_access_denied" in full_body
+            or "not available to this account" in body.lower()
+        ):
+            raise ProviderAccessError(
+                f"{provider.model} is not available to this account yet. "
+                f"OrcaRouter free models require the workspace owner to link an "
+                f"established GitHub account in the profile settings (a newly "
+                f"created GitHub account does not qualify yet), or to add "
+                f"credits. See https://docs.orcarouter.ai/routing/free-models. "
+                f"Server said: {body}"
+            )
+
+        # OrcaRouter free-tier per-request prompt cap: retrying the identical
+        # (oversized) prompt fails forever, so fail fast with guidance.
+        if error_reason == "err_free_prompt_cap" or "err_free_prompt_cap" in full_body:
+            raise ProviderAccessError(
+                f"The request exceeded the OrcaRouter free-tier per-request "
+                f"prompt cap for {provider.model} (long context: free requests "
+                f"carry a small prompt-token ceiling). Shorten the injected "
+                f"prior-stage context, use the paid base model, or raise the "
+                f"account tier. Server said: {body}"
+            )
 
         if response.status_code == 429:
             if any(marker in body.lower() for marker in _QUOTA_MARKERS):
@@ -240,13 +282,42 @@ class LLMClient:
             )
 
         if response.status_code in (400, 403, 404):
+            if "user location is not supported" in full_body.lower():
+                raise ProviderAccessError(
+                    "Google Gemini rejects requests from this location (HTTP 400 "
+                    "'User location is not supported for the API use'). The "
+                    "Gemini API is not available in every region. Run from a "
+                    "supported region (e.g. the Streamlit Cloud deployment), "
+                    "use a VPN, or point GEMINI_BASE_URL at a supported proxy. "
+                    f"Server said: {body}"
+                )
             raise LLMConfigError(
-                f"HTTP {response.status_code}: {body}. Check GEMINI_MODEL "
+                f"HTTP {response.status_code}: {body}. Check the model name "
                 f"and API key permissions."
             )
 
         raise TransientAPIError(
             f"HTTP {response.status_code}: {body}", retry_after=retry_after
+        )
+
+    @staticmethod
+    def _parse_error_meta(text: str) -> tuple[Optional[str], Optional[str]]:
+        """Extract (error.code, error.metadata.reason) from a JSON error body."""
+        try:
+            data = json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return None, None
+        if not isinstance(data, dict):
+            return None, None
+        error = data.get("error")
+        if not isinstance(error, dict):
+            return None, None
+        code = error.get("code")
+        metadata = error.get("metadata")
+        reason = metadata.get("reason") if isinstance(metadata, dict) else None
+        return (
+            code if isinstance(code, str) else None,
+            reason if isinstance(reason, str) else None,
         )
 
     @staticmethod
@@ -564,7 +635,7 @@ class LLMClient:
                     attempt_count=attempt,
                 )
 
-            except (QuotaExhaustedError, LLMConfigError):
+            except (QuotaExhaustedError, LLMConfigError, ProviderAccessError):
                 raise
             except TransientAPIError as exc:
                 delay = self._backoff_delay(attempt, exc.retry_after)

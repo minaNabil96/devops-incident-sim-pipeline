@@ -13,6 +13,7 @@ from src.config.settings import APIConfig
 from src.core.llm import (
     LLMClient,
     LLMConfigError,
+    ProviderAccessError,
     QuotaExhaustedError,
     TransientAPIError,
 )
@@ -52,10 +53,10 @@ def _err_resp(status_code, body='{"error":{"message":"err"}}', headers=None):
     return resp
 
 
-def _build_client(max_retries=2):
+def _build_client(max_retries=2, model="gemini-3.8-flash"):
     cfg = APIConfig(
         base_url="http://x",
-        model="gemini-3.7-flash",
+        model=model,
         max_retries=max_retries,
         timeout_s=5,
         enable_fallback=False,
@@ -67,7 +68,7 @@ def _build_fallback_client(max_retries=2):
     """Client with the OrcaRouter fallback provider enabled."""
     cfg = APIConfig(
         base_url="http://primary",
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         fallback_base_url="http://fallback",
         fallback_model="deepseek/deepseek-v4-flash-free",
         enable_fallback=True,
@@ -482,7 +483,7 @@ def test_primary_success_skips_fallback():
         r = c.generate("test", max_new_tokens=100)
 
     assert r.content == "Primary answer"
-    assert r.model == "gemini-3.7-flash"
+    assert r.model == "gemini-3.8-flash"
     assert "http://fallback" not in urls
     print("[OK] test_primary_success_skips_fallback")
 
@@ -542,6 +543,142 @@ def test_payload_requests_usage():
 
 
 # ---------------------------------------------------------------------------
+# Test 24: OrcaRouter err_free_access_denied -> ProviderAccessError, fails fast
+# ---------------------------------------------------------------------------
+def test_orcarouter_access_denied_fails_fast():
+    calls = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        calls.append(url)
+        return _err_resp(
+            429,
+            body=(
+                '{"error":{"code":"free_rate_limited","message":"Free models are '
+                'not available to this account yet. They require the workspace '
+                'owner to link a GitHub account that has been registered for some '
+                'time.","metadata":{"reason":"err_free_access_denied",'
+                '"retryable":false}}}'
+            ),
+        )
+
+    c = _build_fallback_client(max_retries=3)
+    with patch.object(requests, "post", side_effect=mock):
+        try:
+            c.generate("test", max_new_tokens=100)
+        except ProviderAccessError as e:
+            msg = str(e).lower()
+            assert "github" in msg, msg
+            assert "orcarouter" in msg or "account" in msg
+            # fail-fast: primary quota(1) + fallback access-denied(1), NO retries
+            assert len(calls) <= 2, f"expected no retries, got {len(calls)} calls"
+            print("[OK] test_orcarouter_access_denied_fails_fast")
+            return
+    raise AssertionError("expected ProviderAccessError")
+
+
+# ---------------------------------------------------------------------------
+# Test 25: OrcaRouter err_free_prompt_cap (400) -> ProviderAccessError fast
+# ---------------------------------------------------------------------------
+def test_orcarouter_prompt_cap_fails_fast():
+    calls = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        calls.append(url)
+        return _err_resp(
+            400,
+            body=(
+                '{"error":{"type":"invalid_request_error","code":"free_rate_limited",'
+                '"message":"prompt too large","metadata":{"reason":"err_free_prompt_cap",'
+                '"retryable":false}}}'
+            ),
+        )
+
+    c = _build_client(
+        max_retries=3, model="deepseek/deepseek-v4-flash-free"
+    )
+    with patch.object(requests, "post", side_effect=mock):
+        try:
+            c.generate("test", max_new_tokens=100)
+        except ProviderAccessError as e:
+            assert "prompt cap" in str(e).lower()
+            assert len(calls) == 1, f"expected 1 call, got {len(calls)}"
+            print("[OK] test_orcarouter_prompt_cap_fails_fast")
+            return
+    raise AssertionError("expected ProviderAccessError")
+
+
+# ---------------------------------------------------------------------------
+# Test 26: OrcaRouter err_free_rate remains transient (retry with Retry-After)
+# ---------------------------------------------------------------------------
+def test_orcarouter_free_rate_is_transient():
+    calls = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        calls.append(url)
+        if len(calls) == 1:
+            return _err_resp(
+                429,
+                body=(
+                    '{"error":{"code":"free_rate_limited","message":"Free model '
+                    'capacity is limited right now.","metadata":{"reason":'
+                    '"err_free_rate","retry_after_seconds":37}}}'
+                ),
+                headers={"Retry-After": "37"},
+            )
+        return _make_stream_resp(_sse(["Recovered"], finish="stop"))
+
+    c = _build_client(max_retries=2)
+    with patch.object(requests, "post", side_effect=mock), \
+         patch("src.core.llm.time.sleep") as sleep_mock:
+        r = c.generate("test", max_new_tokens=100)
+
+    assert r.content == "Recovered"
+    sleeps = [c.args[0] for c in sleep_mock.call_args_list if c.args]
+    assert any(s >= 1.0 for s in sleeps), sleeps
+    print("[OK] test_orcarouter_free_rate_is_transient")
+
+
+# ---------------------------------------------------------------------------
+# Test 27: _parse_error_meta extracts code + metadata.reason
+# ---------------------------------------------------------------------------
+def test_parse_error_meta():
+    code, reason = LLMClient._parse_error_meta(
+        '{"error":{"code":"free_rate_limited","metadata":{"reason":"err_free_access_denied"}}}'
+    )
+    assert code == "free_rate_limited"
+    assert reason == "err_free_access_denied"
+    assert LLMClient._parse_error_meta("not json") == (None, None)
+    assert LLMClient._parse_error_meta('{"error":"oops"}') == (None, None)
+    print("[OK] test_parse_error_meta")
+
+
+# ---------------------------------------------------------------------------
+# Test 28: Gemini geo-restriction 400 -> ProviderAccessError with guidance
+# ---------------------------------------------------------------------------
+def test_gemini_geo_restriction_message():
+    calls = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        calls.append(url)
+        return _err_resp(
+            400,
+            body='[{"error":{"code":400,"message":"User location is not supported '
+                 'for the API use.","status":"FAILED_PRECONDITION"}}]',
+        )
+
+    c = _build_client(max_retries=3, model="gemini-3.8-flash")
+    with patch.object(requests, "post", side_effect=mock):
+        try:
+            c.generate("test", max_new_tokens=100)
+        except ProviderAccessError as e:
+            msg = str(e).lower()
+            assert "location" in msg and "region" in msg
+            print("[OK] test_gemini_geo_restriction_message")
+            return
+    raise AssertionError("expected ProviderAccessError")
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_complete_response()
     test_truncation_continues()
@@ -566,4 +703,9 @@ if __name__ == "__main__":
     test_usage_tokens_reported()
     test_single_chunk_nonzero_tokens()
     test_payload_requests_usage()
-    print("\n=== ALL 23 TESTS PASSED ===")
+    test_orcarouter_access_denied_fails_fast()
+    test_orcarouter_prompt_cap_fails_fast()
+    test_orcarouter_free_rate_is_transient()
+    test_parse_error_meta()
+    test_gemini_geo_restriction_message()
+    print("\n=== ALL 28 TESTS PASSED ===")
