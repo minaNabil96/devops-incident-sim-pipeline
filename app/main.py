@@ -432,6 +432,13 @@ def render_main_content(params: dict[str, Any]) -> None:
     if st.session_state.get("run_error"):
         st.error("❌ Simulation stopped — the LLM request failed.")
         st.code(st.session_state.run_error, language="text")
+        try:
+            from src.config.settings import APIConfig
+
+            _chain = " → ".join(APIConfig().gemini_model_chain)
+        except Exception:  # noqa: BLE001
+            _chain = "?"
+        st.caption(f"Build: {APP_BUILD} · LLM chain: {_chain}")
         st.caption(
             "The message above lists every provider that was tried and why each "
             "failed. Common causes: Gemini daily quota exhausted (resets at "

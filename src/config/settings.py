@@ -80,8 +80,10 @@ def _resolve_api_key() -> str:
 
 
 def _resolve_fallback_api_key() -> str:
-    """Resolve the OrcaRouter fallback key (ORCAROUTER_API_KEY). Optional."""
-    return _resolve_env_key("ORCAROUTER_API_KEY")
+    """Resolve the fallback provider key (FALLBACK_API_KEY or ORCAROUTER_API_KEY)."""
+    return _resolve_env_key("FALLBACK_API_KEY") or _resolve_env_key(
+        "ORCAROUTER_API_KEY"
+    )
 
 
 class APIKeyResolution(BaseModel):
@@ -122,15 +124,19 @@ class APIConfig(BaseModel):
     # within max_tokens. Set GEMINI_REASONING_EFFORT to force a value.
     reasoning_effort: Optional[str] = os.getenv("GEMINI_REASONING_EFFORT") or None
 
-    # --- OrcaRouter fallback (used when Gemini is quota-exhausted or down) ---
-    # OrcaRouter is an OpenAI-compatible gateway. The fallback activates only
-    # when ORCAROUTER_API_KEY is present; otherwise behavior is Gemini-only.
-    fallback_base_url: str = os.getenv(
-        "ORCAROUTER_BASE_URL",
-        "https://api.orcarouter.ai/v1/chat/completions",
+    # --- Fallback provider (used when every Gemini model is exhausted/down) ---
+    # Any OpenAI-compatible endpoint works. Defaults to OrcaRouter. The generic
+    # FALLBACK_* names take precedence, so the fallback can be repointed at
+    # another gateway (e.g. OpenRouter, Groq) without touching the code.
+    fallback_base_url: str = (
+        os.getenv("FALLBACK_BASE_URL")
+        or os.getenv("ORCAROUTER_BASE_URL")
+        or "https://api.orcarouter.ai/v1/chat/completions"
     )
-    fallback_model: str = os.getenv(
-        "ORCAROUTER_MODEL", "deepseek/deepseek-v4-flash-free"
+    fallback_model: str = (
+        os.getenv("FALLBACK_MODEL")
+        or os.getenv("ORCAROUTER_MODEL")
+        or "deepseek/deepseek-v4-flash-free"
     )
     enable_fallback: bool = os.getenv("ENABLE_LLM_FALLBACK", "true").lower() not in (
         "0",
