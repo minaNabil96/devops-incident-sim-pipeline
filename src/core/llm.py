@@ -29,7 +29,8 @@ import requests
 
 from src.config.settings import (
     APIConfig,
-    _resolve_api_key,
+    _resolve_agentrouter_api_key,
+    _resolve_api_keys,
     _resolve_fallback_api_key,
 )
 
@@ -117,30 +118,55 @@ class LLMClient:
     def __init__(self, config: Optional[APIConfig] = None) -> None:
         self.config = config or APIConfig()
 
-        api_key = _resolve_api_key()
-        if not api_key:
+        gemini_keys = _resolve_api_keys()
+        if not gemini_keys:
             raise ValueError(
-                "GEMINI_API_KEY not found. Set via:\n"
-                "  Colab Secrets | .env file | Environment variable"
+                "GEMINI_API_KEY (or GEMINI_API_KEYS) not found. Set via:\n"
+                "  Colab Secrets | Streamlit secrets | .env file | Environment variable"
             )
 
-        # Primary providers: Google Gemini (OpenAI-compatible endpoint). The
-        # ordered model chain gives resilience against model retirement and
-        # multiplies free-tier capacity (quota is granted per model per day).
+        # Primary providers: Google Gemini (OpenAI-compatible endpoint).
+        # Ordered model-major: for each model try EVERY key before dropping to
+        # the next model, so the newest model is kept as long as any key has
+        # quota. Multiple keys and multiple models both multiply free capacity
+        # (quota is per Google Cloud project per model).
         self.headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {gemini_keys[0]}",
             "Content-Type": "application/json",
         }
+        multi_key = len(gemini_keys) > 1
         self._providers = [
             _Provider(
-                name="gemini",
+                name="gemini" + (f"#{ki + 1}" if multi_key else ""),
                 base_url=self.config.base_url,
                 model=gemini_model,
-                headers=self.headers,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                },
                 is_reasoning_model=gemini_model.startswith("gemini-3"),
             )
             for gemini_model in self.config.gemini_model_chain
+            for ki, key in enumerate(gemini_keys)
         ]
+
+        # Secondary provider: AgentRouter (DeepSeek), after all Gemini attempts.
+        agentrouter_key = _resolve_agentrouter_api_key()
+        if agentrouter_key:
+            self._providers.append(
+                _Provider(
+                    name="agentrouter",
+                    base_url=self.config.agentrouter_base_url,
+                    model=self.config.agentrouter_model,
+                    headers={
+                        "Authorization": f"Bearer {agentrouter_key}",
+                        "Content-Type": "application/json",
+                    },
+                    is_reasoning_model=True,
+                    token_scale=3.0,
+                    token_floor=8000,
+                )
+            )
 
         # Fallback provider: OrcaRouter (only if configured + a key exists).
         fallback_key = _resolve_fallback_api_key()
@@ -165,10 +191,17 @@ class LLMClient:
                 )
             )
 
-        print(
-            "  [llm] provider chain: "
-            + " -> ".join(p.model for p in self._providers)
-        )
+        print("  [llm] provider chain: " + " -> ".join(self._provider_labels()))
+
+    def _provider_labels(self) -> list[str]:
+        """Human-readable provider chain labels (never includes key material)."""
+        labels: list[str] = []
+        for p in self._providers:
+            if p.name.startswith("gemini"):
+                labels.append(f"{p.model}{p.name[len('gemini'):]}")
+            else:
+                labels.append(f"{p.model} ({p.name})")
+        return labels
 
     def _base_payload(self, provider: _Provider, max_new_tokens: int) -> dict:
         payload = {

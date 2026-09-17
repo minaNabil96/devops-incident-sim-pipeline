@@ -53,16 +53,18 @@ def _err_resp(status_code, body='{"error":{"message":"err"}}', headers=None):
     return resp
 
 
-def _build_client(max_retries=2, model="gemini-3.8-flash"):
+def _build_client(max_retries=2, model="gemini-3.8-flash", keys=("test-key",)):
     cfg = APIConfig(
         base_url="http://x",
         model=model,
-        gemini_models="",  # single Gemini provider for deterministic tests
+        gemini_models="",  # single Gemini model for deterministic tests
         max_retries=max_retries,
         timeout_s=5,
         enable_fallback=False,
     )
-    return LLMClient(cfg)
+    with patch("src.core.llm._resolve_api_keys", return_value=list(keys)), \
+         patch("src.core.llm._resolve_agentrouter_api_key", return_value=""):
+        return LLMClient(cfg)
 
 
 def _build_fallback_client(max_retries=2):
@@ -77,7 +79,9 @@ def _build_fallback_client(max_retries=2):
         max_retries=max_retries,
         timeout_s=5,
     )
-    with patch("src.core.llm._resolve_fallback_api_key", return_value="sk-orca-test"):
+    with patch("src.core.llm._resolve_api_keys", return_value=["test-key"]), \
+         patch("src.core.llm._resolve_agentrouter_api_key", return_value=""), \
+         patch("src.core.llm._resolve_fallback_api_key", return_value="sk-orca-test"):
         return LLMClient(cfg)
 
 
@@ -760,6 +764,127 @@ def test_error_summary_includes_all_providers():
 
 
 # ---------------------------------------------------------------------------
+# Test 32: multiple Gemini keys -> model-major provider order (no secrets leaked)
+# ---------------------------------------------------------------------------
+def test_multiple_gemini_keys_model_major_order():
+    cfg = APIConfig(
+        base_url="http://x",
+        model="gemini-3.8-flash",
+        gemini_models="gemini-3.7-flash",
+        enable_fallback=False,
+    )
+    with patch("src.core.llm._resolve_api_keys", return_value=["k1", "k2"]), \
+         patch("src.core.llm._resolve_agentrouter_api_key", return_value=""):
+        c = LLMClient(cfg)
+
+    assert c._provider_labels() == [
+        "gemini-3.8-flash#1",
+        "gemini-3.8-flash#2",
+        "gemini-3.7-flash#1",
+        "gemini-3.7-flash#2",
+    ]
+    # labels must never contain key material
+    assert all("k1" not in lbl and "k2" not in lbl for lbl in c._provider_labels())
+    print("[OK] test_multiple_gemini_keys_model_major_order")
+
+
+# ---------------------------------------------------------------------------
+# Test 33: second Gemini key is used when the first key's quota is exhausted
+# ---------------------------------------------------------------------------
+def test_second_gemini_key_used_when_first_exhausted():
+    seen_auth: list[str] = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        seen_auth.append(headers["Authorization"])
+        if headers["Authorization"] == "Bearer k1":
+            return _err_resp(
+                429,
+                body='{"error":{"code":429,"message":"You exceeded your current quota"}}',
+            )
+        return _make_stream_resp(_sse(["served by k2"], finish="stop"))
+
+    cfg = APIConfig(
+        base_url="http://x",
+        model="gemini-3.8-flash",
+        gemini_models="",
+        enable_fallback=False,
+    )
+    with patch("src.core.llm._resolve_api_keys", return_value=["k1", "k2"]), \
+         patch("src.core.llm._resolve_agentrouter_api_key", return_value=""):
+        c = LLMClient(cfg)
+
+    with patch.object(requests, "post", side_effect=mock):
+        r = c.generate("test", max_new_tokens=50)
+
+    assert r.content == "served by k2"
+    assert seen_auth == ["Bearer k1", "Bearer k2"]
+    print("[OK] test_second_gemini_key_used_when_first_exhausted")
+
+
+# ---------------------------------------------------------------------------
+# Test 34: AgentRouter sits between Gemini and OrcaRouter in the chain
+# ---------------------------------------------------------------------------
+def test_agentrouter_provider_order():
+    cfg = APIConfig(
+        base_url="http://x",
+        model="gemini-3.8-flash",
+        gemini_models="",
+        agentrouter_base_url="http://agentrouter",
+        agentrouter_model="deepseek-v4-flash",
+        fallback_base_url="http://fallback",
+        fallback_model="deepseek/deepseek-v4-flash-free",
+        enable_fallback=True,
+    )
+    with patch("src.core.llm._resolve_api_keys", return_value=["k1"]), \
+         patch("src.core.llm._resolve_agentrouter_api_key", return_value="ar-key"), \
+         patch("src.core.llm._resolve_fallback_api_key", return_value="sk-orca-test"):
+        c = LLMClient(cfg)
+
+    assert c._provider_labels() == [
+        "gemini-3.8-flash",
+        "deepseek-v4-flash (agentrouter)",
+        "deepseek/deepseek-v4-flash-free (orcarouter)",
+    ]
+    print("[OK] test_agentrouter_provider_order")
+
+
+# ---------------------------------------------------------------------------
+# Test 35: AgentRouter serves the response when Gemini is exhausted
+# ---------------------------------------------------------------------------
+def test_agentrouter_serves_after_gemini_fails():
+    urls: list[str] = []
+
+    def mock(url, headers=None, json=None, stream=None, timeout=None):
+        urls.append(url)
+        if url == "http://x":
+            return _err_resp(
+                429,
+                body='{"error":{"code":429,"message":"You exceeded your current quota"}}',
+            )
+        return _make_stream_resp(_sse(["from agentrouter"], finish="stop"))
+
+    cfg = APIConfig(
+        base_url="http://x",
+        model="gemini-3.8-flash",
+        gemini_models="",
+        agentrouter_base_url="http://agentrouter",
+        agentrouter_model="deepseek-v4-flash",
+        enable_fallback=False,
+    )
+    with patch("src.core.llm._resolve_api_keys", return_value=["k1"]), \
+         patch("src.core.llm._resolve_agentrouter_api_key", return_value="ar-key"):
+        c = LLMClient(cfg)
+
+    with patch.object(requests, "post", side_effect=mock):
+        r = c.generate("test", max_new_tokens=50)
+
+    assert r.content == "from agentrouter"
+    assert r.model == "deepseek-v4-flash"
+    assert urls == ["http://x", "http://agentrouter"]
+    print("[OK] test_agentrouter_serves_after_gemini_fails")
+
+
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     test_complete_response()
     test_truncation_continues()
@@ -792,4 +917,8 @@ if __name__ == "__main__":
     test_gemini_model_chain_falls_through()
     test_gemini_model_chain_property()
     test_error_summary_includes_all_providers()
-    print("\n=== ALL 31 TESTS PASSED ===")
+    test_multiple_gemini_keys_model_major_order()
+    test_second_gemini_key_used_when_first_exhausted()
+    test_agentrouter_provider_order()
+    test_agentrouter_serves_after_gemini_fails()
+    print("\n=== ALL 35 TESTS PASSED ===")

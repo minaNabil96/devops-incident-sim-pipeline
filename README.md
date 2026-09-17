@@ -201,6 +201,7 @@ crew.kickoff()                        # CrewAI sequential orchestration
 
 - Python 3.12+
 - A Google Gemini API key (`GEMINI_API_KEY`) â€” get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+- *(Optional)* An AgentRouter key (`AGENTROUTER_API_KEY`) — the secondary provider (DeepSeek), tried after every Gemini attempt — get one at [agentrouter.org](https://agentrouter.org)
 - *(Optional)* An OrcaRouter key (`ORCAROUTER_API_KEY`) for automatic fallback when the Gemini free-tier daily quota is exhausted â€” get one at [orcarouter.ai](https://www.orcarouter.ai)
 
 ### Local Setup
@@ -364,7 +365,8 @@ Your app is live at `https://<your-username>-devops-incident-sim-pipeline.hf.spa
 | Problem | Solution |
 |---------|----------|
 | `GEMINI_API_KEY not found` | Set via Colab Secrets, `.env` file, or environment variable |
-| Gemini daily free-tier quota exhausted | Each Gemini model has its own free quota — the client tries `GEMINI_MODELS` in order (default `gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash`), then falls back to OrcaRouter if configured |
+| Gemini daily free-tier quota exhausted | Each Gemini model has its own free quota — the client tries every model × key (`GEMINI_MODELS`, default `gemini-3.8-flash,gemini-3.7-flash,gemini-3.6-flash`; extra keys via `GEMINI_API_KEYS`), then AgentRouter, then OrcaRouter |
+| Want more Gemini free capacity | Add `GEMINI_API_KEYS` with keys from **different Google Cloud projects** (quota is per project per model, so keys from one project share a single quota) |
 | Fallback not triggering on Streamlit Cloud | Add `ORCAROUTER_API_KEY` under **App â†’ Settings â†’ Secrets** (keys are read from `st.secrets`), then reboot the app |
 | `ProviderAccessError`: OrcaRouter free models not available | Link an established GitHub account in the OrcaRouter **profile settings** (newly created accounts do not qualify), or add credits |
 | `ProviderAccessError`: request exceeded the free-tier prompt cap | Free OrcaRouter requests cap prompt size; deep stages inject long context. Use the paid base model or shorten prior-stage context |

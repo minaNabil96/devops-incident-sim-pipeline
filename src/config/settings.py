@@ -66,6 +66,10 @@ def _resolve_env_key(name: str) -> str:
         if name in st.secrets:
             value = st.secrets[name]
             if value:
+                # TOML lists (e.g. GEMINI_API_KEYS = ["a", "b"]) arrive as
+                # list/tuple; join them so downstream comma-splitting works.
+                if isinstance(value, (list, tuple)):
+                    return ",".join(str(v) for v in value)
                 return str(value)
     except Exception:
         pass
@@ -74,9 +78,37 @@ def _resolve_env_key(name: str) -> str:
     return os.getenv(name) or ""
 
 
+def _split_keys(raw: str) -> list[str]:
+    """Split a comma/newline separated key list, preserving order."""
+    return [k.strip() for k in str(raw).replace("\n", ",").split(",") if k.strip()]
+
+
+def _resolve_api_keys() -> list[str]:
+    """
+    Resolve ALL Gemini API keys, de-duplicated and order-preserving.
+
+    Sources: GEMINI_API_KEY (single) and GEMINI_API_KEYS (comma-separated or
+    a TOML list in st.secrets). Multiple keys multiply free-tier capacity —
+    but note Gemini quota is per Google Cloud *project*, so keys from the same
+    project still share one quota; use keys from different projects.
+    """
+    keys: list[str] = []
+    for name in ("GEMINI_API_KEY", "GEMINI_API_KEYS"):
+        for key in _split_keys(_resolve_env_key(name)):
+            if key not in keys:
+                keys.append(key)
+    return keys
+
+
 def _resolve_api_key() -> str:
-    """Resolve the primary provider key (GEMINI_API_KEY)."""
-    return _resolve_env_key("GEMINI_API_KEY")
+    """Resolve the primary provider key (first GEMINI_API_KEY)."""
+    keys = _resolve_api_keys()
+    return keys[0] if keys else ""
+
+
+def _resolve_agentrouter_api_key() -> str:
+    """Resolve the AgentRouter key (AGENTROUTER_API_KEY). Optional."""
+    return _resolve_env_key("AGENTROUTER_API_KEY")
 
 
 def _resolve_fallback_api_key() -> str:
@@ -124,7 +156,16 @@ class APIConfig(BaseModel):
     # within max_tokens. Set GEMINI_REASONING_EFFORT to force a value.
     reasoning_effort: Optional[str] = os.getenv("GEMINI_REASONING_EFFORT") or None
 
-    # --- Fallback provider (used when every Gemini model is exhausted/down) ---
+    # --- Secondary provider: AgentRouter (tried after every Gemini attempt) ---
+    # OpenAI-compatible gateway exposing DeepSeek. Only used when
+    # AGENTROUTER_API_KEY is present.
+    agentrouter_base_url: str = os.getenv(
+        "AGENTROUTER_BASE_URL",
+        "https://agentrouter.org/v1/chat/completions",
+    )
+    agentrouter_model: str = os.getenv("AGENTROUTER_MODEL", "deepseek-v4-flash")
+
+    # --- Fallback provider (used when Gemini and AgentRouter are exhausted/down) ---
     # Any OpenAI-compatible endpoint works. Defaults to OrcaRouter. The generic
     # FALLBACK_* names take precedence, so the fallback can be repointed at
     # another gateway (e.g. OpenRouter, Groq) without touching the code.
